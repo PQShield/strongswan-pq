@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Tobias Brunner
+ * Copyright (C) 2016-2020 Tobias Brunner
  * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -70,6 +70,111 @@ START_TEST(test_regular)
 	/* <-- CREATE_CHILD_SA { SA, Nr, KEr } */
 	assert_hook_rekey(ike_rekey, 1, 3);
 	assert_no_notify(IN, REKEY_SA);
+	exchange_test_helper->process_message(exchange_test_helper, a, NULL);
+	assert_ike_sa_state(a, IKE_DELETING);
+	assert_child_sa_count(a, 0);
+	new_sa = assert_ike_sa_checkout(3, 4, TRUE);
+	assert_ike_sa_state(new_sa, IKE_ESTABLISHED);
+	assert_child_sa_count(new_sa, 1);
+	assert_ike_sa_count(2);
+	assert_hook();
+
+	/* we don't expect this hook to get called anymore */
+	assert_hook_not_called(ike_rekey);
+
+	/* INFORMATIONAL { D } --> */
+	assert_single_payload(IN, PLV2_DELETE);
+	s = exchange_test_helper->process_message(exchange_test_helper, b, NULL);
+	ck_assert_int_eq(DESTROY_ME, s);
+	call_ikesa(b, destroy);
+	/* <-- INFORMATIONAL { } */
+	assert_message_empty(IN);
+	s = exchange_test_helper->process_message(exchange_test_helper, a, NULL);
+	ck_assert_int_eq(DESTROY_ME, s);
+	call_ikesa(a, destroy);
+
+	/* ike_rekey/ike_updown/child_updown */
+	assert_hook();
+	assert_hook();
+	assert_hook();
+
+	charon->ike_sa_manager->flush(charon->ike_sa_manager);
+}
+END_TEST
+
+/**
+ * Config for multiple KE exchange tests
+ */
+static exchange_test_sa_conf_t add_ke_conf = {
+	.initiator = {
+		.ike = "aes256-sha256-modp3072-ke1_ecp256",
+	},
+	.responder = {
+		.ike = "aes256-sha256-modp3072-ke1_ecp256",
+	},
+};
+
+/**
+ * FIXME: rekeying is not yet supported
+ */
+START_TEST(test_regular_additional_ke)
+{
+	ike_sa_t *a, *b, *new_sa;
+	status_t s;
+
+	if (_i)
+	{	/* responder rekeys the IKE_SA */
+		exchange_test_helper->establish_sa(exchange_test_helper,
+										   &b, &a, &add_ke_conf);
+	}
+	else
+	{	/* initiator rekeys the IKE_SA */
+		exchange_test_helper->establish_sa(exchange_test_helper,
+										   &a, &b, &add_ke_conf);
+	}
+	/* these should never get called as this results in a successful rekeying */
+	assert_hook_not_called(ike_updown);
+	assert_hook_not_called(child_updown);
+
+	initiate_rekey(a);
+
+	/* CREATE_CHILD_SA { SA, Ni, KEi } --> */
+	assert_hook_not_called(ike_rekey);
+	assert_no_notify(IN, REKEY_SA);
+	exchange_test_helper->process_message(exchange_test_helper, b, NULL);
+	assert_ike_sa_state(b, IKE_ESTABLISHED);
+	// use IKE_REKEYING instead? or a separate new state?
+	assert_child_sa_count(b, 1);
+	assert_ike_sa_count(0);
+	assert_hook();
+
+	/* <-- CREATE_CHILD_SA { SA, Nr, KEr, N(ADD_KE) } */
+	assert_hook_not_called(ike_rekey);
+	//assert_notify(IN, ADDITIONAL_KEY_EXCHANGE);
+	exchange_test_helper->process_message(exchange_test_helper, a, NULL);
+	assert_ike_sa_state(a, IKE_REKEYING);
+	// use a separate new state?
+	assert_child_sa_count(a, 1);
+	assert_ike_sa_count(0);
+	assert_hook();
+
+	/* IKE_FOLLOWUP_KE { KEi, N(ADD_KE) } --> */
+	assert_hook_rekey(ike_rekey, 1, 3);
+	assert_payload(IN, PLV2_KEY_EXCHANGE);
+	//assert_notify(IN, ADDITIONAL_KEY_EXCHANGE);
+	exchange_test_helper->process_message(exchange_test_helper, b, NULL);
+	assert_ike_sa_state(b, IKE_REKEYED);
+	assert_child_sa_count(b, 0);
+	new_sa = assert_ike_sa_checkout(3, 4, FALSE);
+	assert_ike_sa_state(new_sa, IKE_ESTABLISHED);
+	assert_child_sa_count(new_sa, 1);
+	assert_ike_sa_count(1);
+	assert_hook();
+
+	/* <-- IKE_FOLLOWUP_KE { KEr } */
+	assert_hook_rekey(ike_rekey, 1, 3);
+	assert_payload(IN, PLV2_KEY_EXCHANGE);
+	assert_no_notify(IN, ADDITIONAL_KEY_EXCHANGE);
 	exchange_test_helper->process_message(exchange_test_helper, a, NULL);
 	assert_ike_sa_state(a, IKE_DELETING);
 	assert_child_sa_count(a, 0);
@@ -1464,6 +1569,7 @@ Suite *ike_rekey_suite_create()
 
 	tc = tcase_create("regular");
 	tcase_add_loop_test(tc, test_regular, 0, 2);
+	tcase_add_loop_test(tc, test_regular_additional_ke, 0, 2);
 	tcase_add_loop_test(tc, test_regular_ke_invalid, 0, 2);
 	suite_add_tcase(s, tc);
 

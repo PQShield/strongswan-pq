@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2015 Tobias Brunner
+ * Copyright (C) 2011-2020 Tobias Brunner
  * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -43,7 +43,7 @@ struct keymat_v2_t {
 	 * crypters and authentication functions.
 	 *
 	 * @param proposal	selected algorithms
-	 * @param dh		diffie hellman key allocated by create_ke()
+	 * @param kes		array of key_exchange_t* created by create_ke()
 	 * @param nonce_i	initiators nonce value
 	 * @param nonce_r	responders nonce value
 	 * @param id		IKE_SA identifier
@@ -52,7 +52,7 @@ struct keymat_v2_t {
 	 * @return			TRUE on success
 	 */
 	bool (*derive_ike_keys)(keymat_v2_t *this, proposal_t *proposal,
-							key_exchange_t *dh, chunk_t nonce_i,
+							array_t *kes, chunk_t nonce_i,
 							chunk_t nonce_r, ike_sa_id_t *id,
 							pseudo_random_function_t rekey_function,
 							chunk_t rekey_skd);
@@ -76,7 +76,7 @@ struct keymat_v2_t {
 	 * If no PFS is used for the CHILD_SA, dh can be NULL.
 	 *
 	 * @param proposal	selected algorithms
-	 * @param dh		diffie hellman key allocated by create_ke(), or NULL
+	 * @param kes		array of key_exchange_t* created by create_ke(), or NULL
 	 * @param nonce_i	initiators nonce value
 	 * @param nonce_r	responders nonce value
 	 * @param encr_i	chunk to write initiators encryption key to
@@ -86,10 +86,11 @@ struct keymat_v2_t {
 	 * @return			TRUE on success
 	 */
 	bool (*derive_child_keys)(keymat_v2_t *this,
-							  proposal_t *proposal, key_exchange_t *dh,
+							  proposal_t *proposal, array_t *kes,
 							  chunk_t nonce_i, chunk_t nonce_r,
 							  chunk_t *encr_i, chunk_t *integ_i,
 							  chunk_t *encr_r, chunk_t *integ_r);
+
 	/**
 	 * Get SKd to pass to derive_ikey_keys() during rekeying.
 	 *
@@ -99,6 +100,21 @@ struct keymat_v2_t {
 	pseudo_random_function_t (*get_skd)(keymat_v2_t *this, chunk_t *skd);
 
 	/**
+	 * Generate data for signed octets when using IKE_INTEMEDIATE exchanges.
+	 *
+	 * The supplied chunk must contain the IKE header until the end of the
+	 * Encrypted Payload header followed by the plaintext contents of the
+	 * latter.
+	 *
+	 * @param verify		TRUE as recipient, FALSE as sender
+	 * @param data			IKE_INTERMEDIATE packet data
+	 * @param[out] auth		IntAuth data to be used later with get_auth_octets()
+	 * @return				TRUE if octets created successfully
+	 */
+	bool (*get_int_auth)(keymat_v2_t *this, bool verify, chunk_t data,
+						 chunk_t *auth);
+
+	/**
 	 * Generate octets to use for authentication procedure (RFC4306 2.15).
 	 *
 	 * This method creates the plain octets and is usually signed by a private
@@ -106,21 +122,23 @@ struct keymat_v2_t {
 	 * the get_psk_sig() method instead.
 	 *
 	 * @param verify		TRUE to create for verification, FALSE to sign
-	 * @param ike_sa_init	encoded ike_sa_init message
+	 * @param ike_sa_init	encoded IKE_SA_INIT message
 	 * @param nonce			nonce value
+	 * @param int_auth		concatenated data of IKE_INTERMEDIATE exchanges
 	 * @param ppk			optional postquantum preshared key
 	 * @param id			identity
 	 * @param reserved		reserved bytes of id_payload
-	 * @param octests		chunk receiving allocated auth octets
+	 * @param octets		chunk receiving allocated auth octets
 	 * @param schemes		array containing signature schemes
 	 * 						(signature_params_t*) in case they need to be
 	 *						modified by the keymat implementation
 	 * @return				TRUE if octets created successfully
 	 */
 	bool (*get_auth_octets)(keymat_v2_t *this, bool verify, chunk_t ike_sa_init,
-							chunk_t nonce, chunk_t ppk, identification_t *id,
-							char reserved[3], chunk_t *octets,
-							array_t *schemes);
+							chunk_t nonce, chunk_t int_auth, chunk_t ppk,
+							identification_t *id, char reserved[3],
+							chunk_t *octets, array_t *schemes);
+
 	/**
 	 * Build the shared secret signature used for PSK and EAP authentication.
 	 *
@@ -129,8 +147,9 @@ struct keymat_v2_t {
 	 * used as secret (used for EAP methods without MSK).
 	 *
 	 * @param verify		TRUE to create for verification, FALSE to sign
-	 * @param ike_sa_init	encoded ike_sa_init message
+	 * @param ike_sa_init	encoded IKE_SA_INIT message
 	 * @param nonce			nonce value
+	 * @param int_auth		concatenated data of IKE_INTERMEDIATE exchanges
 	 * @param secret		optional secret to include into signature
 	 * @param ppk			optional postquantum preshared key
 	 * @param id			identity
@@ -139,8 +158,9 @@ struct keymat_v2_t {
 	 * @return				TRUE if signature created successfully
 	 */
 	bool (*get_psk_sig)(keymat_v2_t *this, bool verify, chunk_t ike_sa_init,
-						chunk_t nonce, chunk_t secret, chunk_t ppk,
-						identification_t *id, char reserved[3], chunk_t *sig);
+						chunk_t nonce, chunk_t int_auth, chunk_t secret,
+						chunk_t ppk, identification_t *id, char reserved[3],
+						chunk_t *sig);
 
 	/**
 	 * Add a hash algorithm supported by the peer for signature authentication.

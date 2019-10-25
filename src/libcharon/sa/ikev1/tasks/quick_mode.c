@@ -271,6 +271,7 @@ static bool install(private_quick_mode_t *this)
 	chunk_t encr_i, encr_r, integ_i, integ_r;
 	linked_list_t *tsi, *tsr, *my_ts, *other_ts;
 	child_sa_t *old = NULL;
+	array_t *kes = NULL;
 
 	this->child_sa->set_proposal(this->child_sa, this->proposal);
 	this->child_sa->set_state(this->child_sa, CHILD_INSTALLING);
@@ -378,8 +379,13 @@ static bool install(private_quick_mode_t *this)
 		return FALSE;
 	}
 
+	if (this->dh)
+	{
+		array_insert_create(&kes, ARRAY_HEAD, this->dh);
+	}
 	charon->bus->child_keys(charon->bus, this->child_sa, this->initiator,
-							this->dh, this->nonce_i, this->nonce_r);
+							kes, this->nonce_i, this->nonce_r);
+	array_destroy(kes);
 
 	my_ts = linked_list_create_from_enumerator(
 				this->child_sa->create_ts_enumerator(this->child_sa, TRUE));
@@ -796,13 +802,13 @@ static linked_list_t *get_proposals(private_quick_mode_t *this,
 	{
 		if (group != MODP_NONE)
 		{
-			if (!proposal->has_ke_method(proposal, group))
+			if (!proposal->has_transform(proposal, KEY_EXCHANGE_METHOD, group))
 			{
 				list->remove_at(list, enumerator);
 				proposal->destroy(proposal);
 				continue;
 			}
-			proposal->promote_ke_method(proposal, group);
+			proposal->promote_transform(proposal, KEY_EXCHANGE_METHOD, group);
 		}
 		proposal->set_spi(proposal, this->spi_i);
 	}
@@ -865,7 +871,8 @@ METHOD(task_t, build_i, status_t,
 				return FAILED;
 			}
 
-			group = this->config->get_ke_method(this->config);
+			group = this->config->get_algorithm(this->config,
+												KEY_EXCHANGE_METHOD);
 			if (group != MODP_NONE)
 			{
 				proposal_t *proposal;

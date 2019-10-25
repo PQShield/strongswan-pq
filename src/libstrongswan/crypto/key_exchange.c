@@ -1,7 +1,8 @@
 /*
- * Copyright (C) 2010-2019 Tobias Brunner
+ * Copyright (C) 2010-2020 Tobias Brunner
  * Copyright (C) 2005-2010 Martin Willi
  * Copyright (C) 2005 Jan Hutter
+ * Copyright (C) 2016-2019 Andreas Steffen
  * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -16,6 +17,9 @@
  */
 
 #include "key_exchange.h"
+
+#include <collections/hashtable.h>
+#include <threading/mutex.h>
 
 ENUM_BEGIN(key_exchange_method_names, MODP_NONE, MODP_1024_BIT,
 	"MODP_NONE",
@@ -53,7 +57,39 @@ ENUM_NEXT(key_exchange_method_names, NTRU_112_BIT, NTRU_256_BIT, MODP_NULL,
 	"NTRU_256");
 ENUM_NEXT(key_exchange_method_names, NH_128_BIT, NH_128_BIT, NTRU_256_BIT,
 	"NEWHOPE_128");
-ENUM_NEXT(key_exchange_method_names, MODP_CUSTOM, MODP_CUSTOM, NH_128_BIT,
+ENUM_NEXT(key_exchange_method_names, KE_BIKE1_L1, KE_SIKE_L5, NH_128_BIT,
+	"KE_BIKE1_L1",
+	"KE_BIKE1_L3",
+	"KE_BIKE1_L5",
+	"KE_BIKE2_L1",
+	"KE_BIKE2_L3",
+	"KE_BIKE2_L5",
+	"KE_BIKE3_L1",
+	"KE_BIKE3_L3",
+	"KE_BIKE3_L5",
+	"KE_FRODO_AES_L1",
+	"KE_FRODO_AES_L3",
+	"KE_FRODO_AES_L5",
+	"KE_FRODO_SHAKE_L1",
+	"KE_FRODO_SHAKE_L3",
+	"KE_FRODO_SHAKE_L5",
+	"KE_KYBER_L1",
+	"KE_KYBER_L3",
+	"KE_KYBER_L5",
+	"KE_NEWHOPE_L1",
+	"KE_NEWHOPE_L5",
+	"KE_NTRU_HPS_L1",
+	"KE_NTRU_HPS_L3",
+	"KE_NTRU_HPS_L5",
+	"KE_NTRU_HRSS_L3",
+	"KE_SABER_L1",
+	"KE_SABER_L3",
+	"KE_SABER_L5",
+	"KE_SIKE_L1",
+	"KE_SIKE_L2",
+	"KE_SIKE_L3",
+	"KE_SIKE_L5");
+ENUM_NEXT(key_exchange_method_names, MODP_CUSTOM, MODP_CUSTOM, KE_SIKE_L5,
 	"MODP_CUSTOM");
 ENUM_END(key_exchange_method_names, MODP_CUSTOM);
 
@@ -435,10 +471,67 @@ static struct {
 	},
 };
 
+/**
+ * Proposal tokens for additional key exchanges.
+ */
+static hashtable_t *tokens;
+
+/**
+ * Mutex to safely access cached tokens.
+ */
+static mutex_t *mutex;
+
+/**
+ * Destroy an allocated proposal token.
+ */
+static void token_destroy(proposal_token_t *this)
+{
+	free(this->name);
+	free(this);
+}
+
+/**
+ * Parse ke<1-7>_<method> for additional key exchange methods.
+ */
+static proposal_token_t *additional_key_exchange_parser(const char *algname)
+{
+	proposal_token_t *token;
+	const proposal_token_t *base;
+	u_int num;
+	char alg[256];
+
+	if (!algname || sscanf(algname, "ke%1u_%255s", &num, alg) != 2)
+	{
+		return NULL;
+	}
+	mutex->lock(mutex);
+	token = tokens->get(tokens, algname);
+	if (token || num < 1 || num > 7)
+	{
+		goto done;
+	}
+	base = lib->proposal->get_token(lib->proposal, alg);
+	if (!base || base->type != KEY_EXCHANGE_METHOD)
+	{
+		goto done;
+	}
+	INIT(token,
+		.name = strdup(algname),
+		.type = ADDITIONAL_KEY_EXCHANGE_1 + num - 1,
+		.algorithm = base->algorithm,
+		.keysize = base->keysize,
+	);
+	tokens->put(tokens, token->name, token);
+
+done:
+	mutex->unlock(mutex);
+	return token;
+}
+
 /*
  * Described in header
  */
-void diffie_hellman_init()
+void key_exchange_init()
 {
 	int i;
 
@@ -458,6 +551,20 @@ void diffie_hellman_init()
 			dh_params[i].public.exp_len = dh_params[i].public.prime.len;
 		}
 	}
+
+	mutex = mutex_create(MUTEX_TYPE_RECURSIVE);
+	tokens = hashtable_create(hashtable_hash_str, hashtable_equals_str, 4);
+	lib->proposal->register_algname_parser(lib->proposal,
+										   additional_key_exchange_parser);
+}
+
+/*
+ * Described in header
+ */
+void key_exchange_deinit()
+{
+	tokens->destroy_function(tokens, (void*)token_destroy);
+	mutex->destroy(mutex);
 }
 
 /*
@@ -493,6 +600,50 @@ bool key_exchange_is_ecdh(key_exchange_method_t ke)
 		case ECP_256_BP:
 		case ECP_384_BP:
 		case ECP_512_BP:
+			return TRUE;
+		default:
+			return FALSE;
+	}
+}
+
+/*
+ * Described in header
+ */
+bool key_exchange_is_kem(key_exchange_method_t ke)
+{
+	switch (ke)
+	{
+		case KE_BIKE1_L1:
+		case KE_BIKE1_L3:
+		case KE_BIKE1_L5:
+		case KE_BIKE2_L1:
+		case KE_BIKE2_L3:
+		case KE_BIKE2_L5:
+		case KE_BIKE3_L1:
+		case KE_BIKE3_L3:
+		case KE_BIKE3_L5:
+		case KE_FRODO_AES_L1:
+		case KE_FRODO_AES_L3:
+		case KE_FRODO_AES_L5:
+		case KE_FRODO_SHAKE_L1:
+		case KE_FRODO_SHAKE_L3:
+		case KE_FRODO_SHAKE_L5:
+		case KE_KYBER_L1:
+		case KE_KYBER_L3:
+		case KE_KYBER_L5:
+		case KE_NEWHOPE_L1:
+		case KE_NEWHOPE_L5:
+		case KE_NTRU_HPS_L1:
+		case KE_NTRU_HPS_L3:
+		case KE_NTRU_HPS_L5:
+		case KE_NTRU_HRSS_L3:
+		case KE_SABER_L1:
+		case KE_SABER_L3:
+		case KE_SABER_L5:
+		case KE_SIKE_L1:
+		case KE_SIKE_L2:
+		case KE_SIKE_L3:
+		case KE_SIKE_L5:
 			return TRUE;
 		default:
 			return FALSE;
@@ -558,6 +709,37 @@ bool key_exchange_verify_pubkey(key_exchange_method_t ke, chunk_t value)
 		case NTRU_192_BIT:
 		case NTRU_256_BIT:
 		case NH_128_BIT:
+		case KE_BIKE1_L1:
+		case KE_BIKE1_L3:
+		case KE_BIKE1_L5:
+		case KE_BIKE2_L1:
+		case KE_BIKE2_L3:
+		case KE_BIKE2_L5:
+		case KE_BIKE3_L1:
+		case KE_BIKE3_L3:
+		case KE_BIKE3_L5:
+		case KE_FRODO_AES_L1:
+		case KE_FRODO_AES_L3:
+		case KE_FRODO_AES_L5:
+		case KE_FRODO_SHAKE_L1:
+		case KE_FRODO_SHAKE_L3:
+		case KE_FRODO_SHAKE_L5:
+		case KE_KYBER_L1:
+		case KE_KYBER_L3:
+		case KE_KYBER_L5:
+		case KE_NEWHOPE_L1:
+		case KE_NEWHOPE_L5:
+		case KE_NTRU_HPS_L1:
+		case KE_NTRU_HPS_L3:
+		case KE_NTRU_HPS_L5:
+		case KE_NTRU_HRSS_L3:
+		case KE_SABER_L1:
+		case KE_SABER_L3:
+		case KE_SABER_L5:
+		case KE_SIKE_L1:
+		case KE_SIKE_L2:
+		case KE_SIKE_L3:
+		case KE_SIKE_L5:
 			/* verification currently not supported, do in plugin */
 			valid = FALSE;
 			break;
@@ -576,4 +758,34 @@ bool key_exchange_verify_pubkey(key_exchange_method_t ke, chunk_t value)
 			 value.len, key_exchange_method_names, ke);
 	}
 	return valid;
+}
+
+/*
+ * Described in header
+ */
+bool key_exchange_concat_secrets(array_t *kes, chunk_t *concat)
+{
+	key_exchange_t *ke;
+	chunk_t secret;
+	int i;
+
+	if (!array_count(kes))
+	{
+		return FALSE;
+	}
+	*concat = chunk_empty;
+	for (i = 0; i < array_count(kes); i++)
+	{
+		if (array_get(kes, i, &ke) &&
+			ke->get_shared_secret(ke, &secret))
+		{
+			*concat = chunk_cat("ss", *concat, secret);
+		}
+		else
+		{
+			chunk_clear(concat);
+			return FALSE;
+		}
+	}
+	return TRUE;
 }

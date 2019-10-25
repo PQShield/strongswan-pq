@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2018 Tobias Brunner
+ * Copyright (C) 2012-2019 Tobias Brunner
  * Copyright (C) 2005-2009 Martin Willi
  * Copyright (C) 2005 Jan Hutter
  * HSR Hochschule fuer Technik Rapperswil
@@ -81,6 +81,11 @@ struct private_ike_auth_t {
 	packet_t *other_packet;
 
 	/**
+	 * IntAuth data from IKE_INTERMEDIATE exchanges
+	 */
+	chunk_t int_auth;
+
+	/**
 	 * Reserved bytes of ID payload
 	 */
 	char reserved[3];
@@ -129,6 +134,11 @@ struct private_ike_auth_t {
 	 * Is EAP acceptable, did we strictly authenticate peer?
 	 */
 	bool eap_acceptable;
+
+	/**
+	 * Whether we already handled the first IKE_AUTH message
+	 */
+	bool first_auth;
 
 	/**
 	 * Gateway ID if redirected
@@ -189,6 +199,42 @@ static status_t collect_other_init_data(private_ike_auth_t *this,
 
 	/* keep a copy of the received packet */
 	this->other_packet = message->get_packet(message);
+	return NEED_MORE;
+}
+
+/**
+ * Collect IntAuth_I|R data for IKE_INTERMEDIATE exchanges
+ */
+static status_t collect_int_auth_data(private_ike_auth_t *this, bool verify,
+									  message_t *message)
+{
+	keymat_v2_t *keymat;
+	chunk_t int_auth_ap, int_auth;
+	packet_t *packet;
+
+	if (!verify)
+	{
+		/* pre-generate our own message */
+		if (this->ike_sa->generate_message(this->ike_sa, message,
+										   &packet) != SUCCESS)
+		{
+			return FAILED;
+		}
+		packet->destroy(packet);
+	}
+
+	if (!message->get_plain(message, &int_auth_ap))
+	{
+		return FAILED;
+	}
+	keymat = (keymat_v2_t*)this->ike_sa->get_keymat(this->ike_sa);
+	if (!keymat->get_int_auth(keymat, verify, int_auth_ap, &int_auth))
+	{
+		chunk_free(&int_auth_ap);
+		return FAILED;
+	}
+	chunk_free(&int_auth_ap);
+	this->int_auth = chunk_cat("mm", this->int_auth, int_auth);
 	return NEED_MORE;
 }
 
@@ -587,10 +633,22 @@ METHOD(task_t, build_i, status_t,
 	private_ike_auth_t *this, message_t *message)
 {
 	auth_cfg_t *cfg;
+	bool first_auth = FALSE;
 
-	if (message->get_exchange_type(message) == IKE_SA_INIT)
+	switch (message->get_exchange_type(message))
 	{
-		return collect_my_init_data(this, message);
+		case IKE_SA_INIT:
+			return collect_my_init_data(this, message);
+		case IKE_INTERMEDIATE:
+			return collect_int_auth_data(this, FALSE, message);
+		case IKE_AUTH:
+			if (!this->first_auth)
+			{	/* some special handling for the first IKE_AUTH message below */
+				first_auth = this->first_auth = TRUE;
+			}
+			break;
+		default:
+			return NEED_MORE;
 	}
 
 	if (!this->peer_cfg)
@@ -599,7 +657,7 @@ METHOD(task_t, build_i, status_t,
 		this->peer_cfg->get_ref(this->peer_cfg);
 	}
 
-	if (message->get_message_id(message) == 1)
+	if (first_auth)
 	{	/* in the first IKE_AUTH ... */
 		if (this->ike_sa->supports_extension(this->ike_sa, EXT_MULTIPLE_AUTH))
 		{	/* indicate support for multiple authentication */
@@ -667,8 +725,7 @@ METHOD(task_t, build_i, status_t,
 		get_reserved_id_bytes(this, id_payload);
 		message->add_payload(message, (payload_t*)id_payload);
 
-		if (idr && !idr->contains_wildcards(idr) &&
-			message->get_message_id(message) == 1 &&
+		if (idr && !idr->contains_wildcards(idr) && first_auth &&
 			this->peer_cfg->get_unique_policy(this->peer_cfg) != UNIQUE_NEVER)
 		{
 			host_t *host;
@@ -691,6 +748,10 @@ METHOD(task_t, build_i, status_t,
 		{
 			charon->bus->alert(charon->bus, ALERT_LOCAL_AUTH_FAILED);
 			return FAILED;
+		}
+		if (this->int_auth.ptr && this->my_auth->set_int_auth)
+		{
+			this->my_auth->set_int_auth(this->my_auth, this->int_auth);
 		}
 	}
 	/* for authentication methods that return NEED_MORE, the PPK will be reset
@@ -743,9 +804,16 @@ METHOD(task_t, process_r, status_t,
 	id_payload_t *id_payload;
 	identification_t *id;
 
-	if (message->get_exchange_type(message) == IKE_SA_INIT)
+	switch (message->get_exchange_type(message))
 	{
-		return collect_other_init_data(this, message);
+		case IKE_SA_INIT:
+			return collect_other_init_data(this, message);
+		case IKE_INTERMEDIATE:
+			return collect_int_auth_data(this, TRUE, message);
+		case IKE_AUTH:
+			break;
+		default:
+			return NEED_MORE;
 	}
 
 	if (!this->my_auth && this->do_another_auth)
@@ -768,7 +836,7 @@ METHOD(task_t, process_r, status_t,
 		return NEED_MORE;
 	}
 
-	if (message->get_message_id(message) == 1)
+	if (!this->first_auth)
 	{	/* check for extensions in the first IKE_AUTH */
 		if (message->get_notify(message, MULTIPLE_AUTH_SUPPORTED))
 		{
@@ -783,6 +851,7 @@ METHOD(task_t, process_r, status_t,
 		{
 			this->initial_contact = TRUE;
 		}
+		this->first_auth = TRUE;
 	}
 
 	if (!this->other_auth)
@@ -852,6 +921,10 @@ METHOD(task_t, process_r, status_t,
 		{
 			this->authentication_failed = TRUE;
 			return NEED_MORE;
+		}
+		if (this->int_auth.ptr && this->other_auth->set_int_auth)
+		{
+			this->other_auth->set_int_auth(this->other_auth, this->int_auth);
 		}
 	}
 	if (message->get_payload(message, PLV2_AUTH) &&
@@ -949,14 +1022,21 @@ METHOD(task_t, build_r, status_t,
 	identification_t *gateway;
 	auth_cfg_t *cfg;
 
-	if (message->get_exchange_type(message) == IKE_SA_INIT)
+	switch (message->get_exchange_type(message))
 	{
-		if (multiple_auth_enabled())
-		{
-			message->add_notify(message, FALSE, MULTIPLE_AUTH_SUPPORTED,
-								chunk_empty);
-		}
-		return collect_my_init_data(this, message);
+		case IKE_SA_INIT:
+			if (multiple_auth_enabled())
+			{
+				message->add_notify(message, FALSE, MULTIPLE_AUTH_SUPPORTED,
+									chunk_empty);
+			}
+			return collect_my_init_data(this, message);
+		case IKE_INTERMEDIATE:
+			return collect_int_auth_data(this, FALSE, message);
+		case IKE_AUTH:
+			break;
+		default:
+			return NEED_MORE;
 	}
 
 	if (this->authentication_failed || !this->peer_cfg)
@@ -1025,6 +1105,10 @@ METHOD(task_t, build_r, status_t,
 			if (!this->my_auth)
 			{
 				goto local_auth_failed;
+			}
+			if (this->int_auth.ptr && this->my_auth->set_int_auth)
+			{
+				this->my_auth->set_int_auth(this->my_auth, this->int_auth);
 			}
 		}
 	}
@@ -1214,14 +1298,21 @@ METHOD(task_t, process_i, status_t,
 	auth_cfg_t *cfg;
 	bool mutual_eap = FALSE, ppk_id_received = FALSE;
 
-	if (message->get_exchange_type(message) == IKE_SA_INIT)
+	switch (message->get_exchange_type(message))
 	{
-		if (message->get_notify(message, MULTIPLE_AUTH_SUPPORTED) &&
-			multiple_auth_enabled())
-		{
-			this->ike_sa->enable_extension(this->ike_sa, EXT_MULTIPLE_AUTH);
-		}
-		return collect_other_init_data(this, message);
+		case IKE_SA_INIT:
+			if (message->get_notify(message, MULTIPLE_AUTH_SUPPORTED) &&
+				multiple_auth_enabled())
+			{
+				this->ike_sa->enable_extension(this->ike_sa, EXT_MULTIPLE_AUTH);
+			}
+			return collect_other_init_data(this, message);
+		case IKE_INTERMEDIATE:
+			return collect_int_auth_data(this, TRUE, message);
+		case IKE_AUTH:
+			break;
+		default:
+			return NEED_MORE;
 	}
 
 	enumerator = message->create_payload_enumerator(message);
@@ -1322,6 +1413,11 @@ METHOD(task_t, process_i, status_t,
 				if (!this->other_auth)
 				{
 					goto peer_auth_failed;
+				}
+				if (this->int_auth.ptr && this->other_auth->set_int_auth)
+				{
+					this->other_auth->set_int_auth(this->other_auth,
+												   this->int_auth);
 				}
 			}
 			else
@@ -1484,6 +1580,7 @@ METHOD(task_t, migrate, void,
 	clear_ppk(this);
 	chunk_free(&this->my_nonce);
 	chunk_free(&this->other_nonce);
+	chunk_free(&this->int_auth);
 	DESTROY_IF(this->my_packet);
 	DESTROY_IF(this->other_packet);
 	DESTROY_IF(this->peer_cfg);
@@ -1503,6 +1600,7 @@ METHOD(task_t, migrate, void,
 	this->expect_another_auth = TRUE;
 	this->authentication_failed = FALSE;
 	this->candidates = linked_list_create();
+	this->first_auth = FALSE;
 }
 
 METHOD(task_t, destroy, void,
@@ -1511,6 +1609,7 @@ METHOD(task_t, destroy, void,
 	clear_ppk(this);
 	chunk_free(&this->my_nonce);
 	chunk_free(&this->other_nonce);
+	chunk_free(&this->int_auth);
 	DESTROY_IF(this->my_packet);
 	DESTROY_IF(this->other_packet);
 	DESTROY_IF(this->my_auth);

@@ -61,8 +61,6 @@ jobs:
       arch: arm64
     - env: TEST=all
       arch: ppc64le
-    - env: TEST=all
-      arch: s390x
     - env: TEST=all UBUNTU_XENIAL=yes
       dist: xenial
     - env: TEST=all UBUNTU_XENIAL=yes

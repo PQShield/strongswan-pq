@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Tobias Brunner
+ * Copyright (C) 2015-2020 Tobias Brunner
  * Copyright (C) 2012 Reto Buerki
  * Copyright (C) 2012 Adrian-Ken Rueegsegger
  * HSR Hochschule fuer Technik Rapperswil
@@ -183,7 +183,7 @@ METHOD(keymat_t, create_nonce_gen, nonce_gen_t*,
 }
 
 METHOD(keymat_v2_t, derive_ike_keys, bool,
-	private_tkm_keymat_t *this, proposal_t *proposal, key_exchange_t *ke,
+	private_tkm_keymat_t *this, proposal_t *proposal, array_t *kes,
 	chunk_t nonce_i, chunk_t nonce_r, ike_sa_id_t *id,
 	pseudo_random_function_t rekey_function, chunk_t rekey_skd)
 {
@@ -191,10 +191,17 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 	uint64_t nc_id, spi_loc, spi_rem;
 	chunk_t *nonce, c_ai, c_ar, c_ei, c_er;
 	tkm_diffie_hellman_t *tkm_dh;
+	key_exchange_t *ke;
 	dh_id_type dh_id;
 	nonce_type nonce_rem;
 	result_type res;
 	key_type sk_ai, sk_ar, sk_ei, sk_er;
+
+	if (array_count(kes) != 1)
+	{
+		DBG1(DBG_IKE, "the TKM currently only supports a single key exchange");
+		return FALSE;
+	}
 
 	/* Check encryption and integrity algorithms */
 	if (!proposal->get_algorithm(proposal, ENCRYPTION_ALGORITHM, &enc_alg,
@@ -238,6 +245,7 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 	}
 
 	/* Get DH context id */
+	array_get(kes, ARRAY_HEAD, &ke);
 	tkm_dh = (tkm_diffie_hellman_t *)ke;
 	dh_id = tkm_dh->get_id(tkm_dh);
 
@@ -335,14 +343,15 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 }
 
 METHOD(keymat_v2_t, derive_child_keys, bool,
-	private_tkm_keymat_t *this, proposal_t *proposal, key_exchange_t *ke,
+	private_tkm_keymat_t *this, proposal_t *proposal, array_t *kes,
 	chunk_t nonce_i, chunk_t nonce_r, chunk_t *encr_i, chunk_t *integ_i,
 	chunk_t *encr_r, chunk_t *integ_r)
 {
 	esa_info_t *esa_info_i, *esa_info_r;
 	dh_id_type dh_id = 0;
+	key_exchange_t *ke;
 
-	if (ke)
+	if (kes && array_get(kes, ARRAY_HEAD, &ke))
 	{
 		dh_id = ((tkm_diffie_hellman_t *)ke)->get_id((tkm_diffie_hellman_t *)ke);
 	}
@@ -383,10 +392,17 @@ METHOD(keymat_t, get_aead, aead_t*,
 	return in ? this->aead_in : this->aead_out;
 }
 
+METHOD(keymat_v2_t, get_int_auth, bool,
+	private_tkm_keymat_t *this, bool verify, chunk_t data, chunk_t *auth)
+{
+	DBG1(DBG_IKE, "TKM doesn't support IntAuth calculation");
+	return FALSE;
+}
+
 METHOD(keymat_v2_t, get_auth_octets, bool,
 	private_tkm_keymat_t *this, bool verify, chunk_t ike_sa_init,
-	chunk_t nonce, chunk_t ppk, identification_t *id, char reserved[3],
-	chunk_t *octets, array_t *schemes)
+	chunk_t nonce, chunk_t int_auth, chunk_t ppk, identification_t *id,
+	char reserved[3], chunk_t *octets, array_t *schemes)
 {
 	sign_info_t *sign;
 
@@ -428,8 +444,8 @@ METHOD(keymat_v2_t, get_skd, pseudo_random_function_t,
 
 METHOD(keymat_v2_t, get_psk_sig, bool,
 	private_tkm_keymat_t *this, bool verify, chunk_t ike_sa_init, chunk_t nonce,
-	chunk_t secret, chunk_t ppk, identification_t *id, char reserved[3],
-	chunk_t *sig)
+	chunk_t int_auth, chunk_t secret, chunk_t ppk, identification_t *id,
+	char reserved[3], chunk_t *sig)
 {
 	return FALSE;
 }
@@ -526,6 +542,7 @@ tkm_keymat_t *tkm_keymat_create(bool initiator)
 				.derive_ike_keys_ppk = (void*)return_false,
 				.derive_child_keys = _derive_child_keys,
 				.get_skd = _get_skd,
+				.get_int_auth = _get_int_auth,
 				.get_auth_octets = _get_auth_octets,
 				.get_psk_sig = _get_psk_sig,
 				.add_hash_algorithm = _add_hash_algorithm,

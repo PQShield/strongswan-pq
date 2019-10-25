@@ -53,6 +53,11 @@ struct private_pubkey_authenticator_t {
 	chunk_t ike_sa_init;
 
 	/**
+	 * IntAuth data to include in AUTH calculation
+	 */
+	chunk_t int_auth;
+
+	/**
 	 * Reserved bytes of ID payload
 	 */
 	char reserved[3];
@@ -324,7 +329,8 @@ static status_t sign_signature_auth(private_pubkey_authenticator_t *this,
 	}
 
 	if (keymat->get_auth_octets(keymat, FALSE, this->ike_sa_init, this->nonce,
-							this->ppk, id, this->reserved, &octets, schemes))
+								this->int_auth, this->ppk, id, this->reserved,
+								&octets, schemes))
 	{
 		enumerator = array_create_enumerator(schemes);
 		while (enumerator->enumerate(enumerator, &params))
@@ -346,8 +352,9 @@ static status_t sign_signature_auth(private_pubkey_authenticator_t *this,
 				chunk_free(&octets);
 
 				if (keymat->get_auth_octets(keymat, FALSE, this->ike_sa_init,
-											this->nonce, chunk_empty, id,
-											this->reserved, &octets, schemes) &&
+											this->nonce, this->int_auth,
+											chunk_empty, id, this->reserved,
+											&octets, schemes) &&
 					private->sign(private, params->scheme, params->params,
 								  octets, &auth_data) &&
 					build_signature_auth_data(&auth_data, params))
@@ -409,7 +416,7 @@ static bool get_auth_octets_scheme(private_pubkey_authenticator_t *this,
 
 	keymat = (keymat_v2_t*)this->ike_sa->get_keymat(this->ike_sa);
 	if (keymat->get_auth_octets(keymat, verify, this->ike_sa_init, this->nonce,
-								ppk, id, this->reserved, octets,
+								this->int_auth, ppk, id, this->reserved, octets,
 								schemes) &&
 		array_remove(schemes, 0, scheme))
 	{
@@ -691,6 +698,12 @@ METHOD(authenticator_t, use_ppk, void,
 	this->no_ppk_auth = no_ppk_auth;
 }
 
+METHOD(authenticator_t, set_int_auth, void,
+	private_pubkey_authenticator_t *this, chunk_t int_auth)
+{
+	this->int_auth = int_auth;
+}
+
 METHOD(authenticator_t, destroy, void,
 	private_pubkey_authenticator_t *this)
 {
@@ -712,6 +725,7 @@ pubkey_authenticator_t *pubkey_authenticator_create_builder(ike_sa_t *ike_sa,
 				.build = _build,
 				.process = (void*)return_failed,
 				.use_ppk = _use_ppk,
+				.set_int_auth = _set_int_auth,
 				.is_mutual = (void*)return_false,
 				.destroy = _destroy,
 			},
@@ -740,6 +754,7 @@ pubkey_authenticator_t *pubkey_authenticator_create_verifier(ike_sa_t *ike_sa,
 				.build = (void*)return_failed,
 				.process = _process,
 				.use_ppk = _use_ppk,
+				.set_int_auth = _set_int_auth,
 				.is_mutual = (void*)return_false,
 				.destroy = _destroy,
 			},

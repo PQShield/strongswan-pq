@@ -316,7 +316,8 @@ static bool update_and_check_proposals(private_child_create_t *this)
 		if (this->dh_group != MODP_NONE)
 		{	/* proposals that don't contain the selected group are
 			 * moved to the back */
-			if (!proposal->promote_ke_method(proposal, this->dh_group))
+			if (!proposal->promote_transform(proposal, KEY_EXCHANGE_METHOD,
+											 this->dh_group))
 			{
 				this->proposals->remove_at(this->proposals, enumerator);
 				other_dh_groups->insert_last(other_dh_groups, proposal);
@@ -544,6 +545,7 @@ static status_t select_and_install(private_child_create_t *this,
 	chunk_t integ_i = chunk_empty, integ_r = chunk_empty;
 	linked_list_t *my_ts, *other_ts;
 	host_t *me, *other;
+	array_t *kes = NULL;
 	proposal_selection_flag_t flags = 0;
 
 	if (this->proposals == NULL)
@@ -598,7 +600,8 @@ static status_t select_and_install(private_child_create_t *this,
 	}
 	this->child_sa->set_proposal(this->child_sa, this->proposal);
 
-	if (!this->proposal->has_ke_method(this->proposal, this->dh_group))
+	if (!this->proposal->has_transform(this->proposal, KEY_EXCHANGE_METHOD,
+									   this->dh_group))
 	{
 		uint16_t group;
 
@@ -728,8 +731,12 @@ static status_t select_and_install(private_child_create_t *this,
 		this->ipcomp = IPCOMP_NONE;
 	}
 	status_i = status_o = FAILED;
+	if (this->dh)
+	{
+		array_insert_create(&kes, ARRAY_HEAD, this->dh);
+	}
 	if (this->keymat->derive_child_keys(this->keymat, this->proposal,
-			this->dh, nonce_i, nonce_r, &encr_i, &integ_i, &encr_r, &integ_r))
+				kes, nonce_i, nonce_r, &encr_i, &integ_i, &encr_r, &integ_r))
 	{
 		if (this->initiator)
 		{
@@ -801,20 +808,20 @@ static status_t select_and_install(private_child_create_t *this,
 			charon->bus->child_derived_keys(charon->bus, this->child_sa,
 											this->initiator, encr_i, encr_r,
 											integ_i, integ_r);
+			charon->bus->child_keys(charon->bus, this->child_sa,
+									this->initiator, kes, nonce_i, nonce_r);
 		}
 	}
 	chunk_clear(&integ_i);
 	chunk_clear(&integ_r);
 	chunk_clear(&encr_i);
 	chunk_clear(&encr_r);
+	array_destroy(kes);
 
 	if (status != SUCCESS)
 	{
 		return status;
 	}
-
-	charon->bus->child_keys(charon->bus, this->child_sa, this->initiator,
-							this->dh, nonce_i, nonce_r);
 
 	my_ts = linked_list_create_from_enumerator(
 				this->child_sa->create_ts_enumerator(this->child_sa, TRUE));
@@ -1096,15 +1103,11 @@ METHOD(task_t, build_i, status_t,
 			}
 			if (!this->retry && this->dh_group == MODP_NONE)
 			{	/* during a rekeying the group might already be set */
-				this->dh_group = this->config->get_ke_method(this->config);
+				this->dh_group = this->config->get_algorithm(this->config,
+														KEY_EXCHANGE_METHOD);
 			}
 			break;
 		case IKE_AUTH:
-			if (message->get_message_id(message) != 1)
-			{
-				/* send only in the first request, not in subsequent rounds */
-				return NEED_MORE;
-			}
 			switch (defer_child_sa(this))
 			{
 				case DESTROY_ME:
@@ -1118,9 +1121,11 @@ METHOD(task_t, build_i, status_t,
 					/* just continue to establish the CHILD_SA */
 					break;
 			}
+			/* send only in the first request, not in subsequent rounds */
+			this->public.task.build = (void*)return_need_more;
 			break;
 		default:
-			break;
+			return NEED_MORE;
 	}
 
 	/* check if we want a virtual IP, but don't have one */
@@ -1253,13 +1258,11 @@ METHOD(task_t, process_r, status_t,
 			get_nonce(message, &this->other_nonce);
 			break;
 		case IKE_AUTH:
-			if (message->get_message_id(message) != 1)
-			{
-				/* only handle first AUTH payload, not additional rounds */
-				return NEED_MORE;
-			}
-		default:
+			/* only handle first AUTH payload, not additional rounds */
+			this->public.task.process = (void*)return_need_more;
 			break;
+		default:
+			return NEED_MORE;
 	}
 
 	process_payloads(this, message);
@@ -1444,8 +1447,9 @@ METHOD(task_t, build_r, status_t,
 					break;
 			}
 			ike_auth = TRUE;
-		default:
 			break;
+		default:
+			return NEED_MORE;
 	}
 
 	if (this->ike_sa->get_state(this->ike_sa) == IKE_REKEYING)
@@ -1634,8 +1638,9 @@ METHOD(task_t, process_i, status_t,
 				return NEED_MORE;
 			}
 			ike_auth = TRUE;
-		default:
 			break;
+		default:
+			return NEED_MORE;
 	}
 
 	/* check for erroneous notifies */

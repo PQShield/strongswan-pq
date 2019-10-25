@@ -251,18 +251,18 @@ METHOD(proposal_t, get_algorithm, bool,
 	return found;
 }
 
-METHOD(proposal_t, has_ke_method, bool,
-	private_proposal_t *this, key_exchange_method_t ke)
+METHOD(proposal_t, has_transform, bool,
+	private_proposal_t *this, transform_type_t type, uint16_t alg)
 {
 	bool found = FALSE, any = FALSE;
 	enumerator_t *enumerator;
 	uint16_t current;
 
-	enumerator = create_enumerator(this, KEY_EXCHANGE_METHOD);
+	enumerator = create_enumerator(this, type);
 	while (enumerator->enumerate(enumerator, &current, NULL))
 	{
 		any = TRUE;
-		if (current == ke)
+		if (current == alg)
 		{
 			found = TRUE;
 			break;
@@ -270,15 +270,15 @@ METHOD(proposal_t, has_ke_method, bool,
 	}
 	enumerator->destroy(enumerator);
 
-	if (!any && ke == MODP_NONE)
+	if (!any && alg == 0)
 	{
 		found = TRUE;
 	}
 	return found;
 }
 
-METHOD(proposal_t, promote_ke_method, bool,
-	private_proposal_t *this, key_exchange_method_t method)
+METHOD(proposal_t, promote_transform, bool,
+	private_proposal_t *this, transform_type_t type, uint16_t alg)
 {
 	enumerator_t *enumerator;
 	entry_t *entry;
@@ -287,8 +287,8 @@ METHOD(proposal_t, promote_ke_method, bool,
 	enumerator = array_create_enumerator(this->transforms);
 	while (enumerator->enumerate(enumerator, &entry))
 	{
-		if (entry->type == KEY_EXCHANGE_METHOD &&
-			entry->alg == method)
+		if (entry->type == type &&
+			entry->alg == alg)
 		{
 			array_remove_at(this->transforms, enumerator);
 			found = TRUE;
@@ -299,8 +299,8 @@ METHOD(proposal_t, promote_ke_method, bool,
 	if (found)
 	{
 		entry_t entry = {
-			.type = KEY_EXCHANGE_METHOD,
-			.alg = method,
+			.type = type,
+			.alg = alg,
 		};
 		array_insert(this->transforms, ARRAY_HEAD, &entry);
 	}
@@ -318,7 +318,7 @@ static bool select_algo(private_proposal_t *this, proposal_t *other,
 	uint16_t alg1, alg2, ks1, ks2;
 	bool found = FALSE, optional = FALSE;
 
-	if (type == KEY_EXCHANGE_METHOD)
+	if (is_ke_transform(type))
 	{
 		optional = this->protocol == PROTO_ESP || this->protocol == PROTO_AH;
 	}
@@ -407,7 +407,7 @@ static bool select_algos(private_proposal_t *this, proposal_t *other,
 		{
 			continue;
 		}
-		if (type == KEY_EXCHANGE_METHOD && (flags & PROPOSAL_SKIP_KE))
+		if (is_ke_transform(type) && (flags & PROPOSAL_SKIP_KE))
 		{
 			continue;
 		}
@@ -600,7 +600,7 @@ METHOD(proposal_t, clone_, proposal_t*,
 		{
 			continue;
 		}
-		if (entry->type == KEY_EXCHANGE_METHOD && (flags & PROPOSAL_SKIP_KE))
+		if (is_ke_transform(entry->type) && (flags & PROPOSAL_SKIP_KE))
 		{
 			continue;
 		}
@@ -942,8 +942,8 @@ proposal_t *proposal_create_v1(protocol_id_t protocol, uint8_t number,
 			.add_algorithm = _add_algorithm,
 			.create_enumerator = _create_enumerator,
 			.get_algorithm = _get_algorithm,
-			.has_ke_method = _has_ke_method,
-			.promote_ke_method = _promote_ke_method,
+			.has_transform = _has_transform,
+			.promote_transform = _promote_transform,
 			.select = _select_proposal,
 			.matches = _matches,
 			.get_protocol = _get_protocol,
@@ -1395,4 +1395,28 @@ proposal_t *proposal_select(linked_list_t *configured, linked_list_t *supplied,
 		DBG1(DBG_CFG, "configured proposals: %#P", configured);
 	}
 	return selected;
+}
+
+/*
+ * Described in header
+ */
+bool proposal_has_additional_ke(proposal_t *public)
+{
+	private_proposal_t *this = (private_proposal_t*)public;
+	enumerator_t *enumerator;
+	entry_t *entry;
+	bool found = FALSE;
+
+	enumerator = array_create_enumerator(this->transforms);
+	while (enumerator->enumerate(enumerator, &entry))
+	{
+		if (entry->type != KEY_EXCHANGE_METHOD &&
+			is_ke_transform(entry->type))
+		{
+			found = TRUE;
+			break;
+		}
+	}
+	enumerator->destroy(enumerator);
+	return found;
 }

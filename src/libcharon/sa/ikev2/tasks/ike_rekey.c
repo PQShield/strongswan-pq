@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2016 Tobias Brunner
+ * Copyright (C) 2015-2020 Tobias Brunner
  * Copyright (C) 2005-2008 Martin Willi
  * Copyright (C) 2005 Jan Hutter
  * HSR Hochschule fuer Technik Rapperswil
@@ -72,6 +72,16 @@ struct private_ike_rekey_t {
 	 * TRUE if rekeying can't be handled temporarily
 	 */
 	bool failed_temporarily;
+
+	/**
+	 * Link value for the current key exchange
+	 */
+	chunk_t link;
+
+	/**
+	 * TRUE if link value was invalid
+	 */
+	bool invalid_link;
 };
 
 /**
@@ -158,13 +168,25 @@ METHOD(task_t, process_i_delete, status_t,
 	return this->ike_delete->task.process(&this->ike_delete->task, message);
 }
 
+METHOD(task_t, build_i_multi_ke, status_t,
+	private_ike_rekey_t *this, message_t *message)
+{
+	status_t status;
+
+	charon->bus->set_sa(charon->bus, this->new_sa);
+	message->add_notify(message, FALSE, ADDITIONAL_KEY_EXCHANGE, this->link);
+	status = this->ike_init->task.build(&this->ike_init->task, message);
+	charon->bus->set_sa(charon->bus, this->ike_sa);
+	return status;
+}
+
 METHOD(task_t, build_i, status_t,
 	private_ike_rekey_t *this, message_t *message)
 {
 	ike_version_t version;
 
 	/* create new SA only on first try */
-	if (this->new_sa == NULL)
+	if (!this->new_sa)
 	{
 		version = this->ike_sa->get_version(this->ike_sa);
 		this->new_sa = charon->ike_sa_manager->checkout_new(
@@ -178,7 +200,8 @@ METHOD(task_t, build_i, status_t,
 		this->ike_sa->set_state(this->ike_sa, IKE_REKEYING);
 	}
 	this->ike_init->task.build(&this->ike_init->task, message);
-
+	charon->bus->set_sa(charon->bus, this->ike_sa);
+	// TODO: error handling? e.g. INVALID_KE_PAYLOAD retries
 	return NEED_MORE;
 }
 
@@ -220,6 +243,52 @@ static bool have_half_open_children(private_ike_rekey_t *this)
 	return FALSE;
 }
 
+/**
+ * Process payloads in a IKE_FOLLOWUP_KE message or a CREATE_CHILD_SA response
+ */
+static void process_link(private_ike_rekey_t *this, message_t *message)
+{
+	notify_payload_t *notify;
+	chunk_t link;
+
+	notify = message->get_notify(message, ADDITIONAL_KEY_EXCHANGE);
+	if (!notify)
+	{
+		DBG1(DBG_IKE, "%N notify missing", notify_type_names,
+			ADDITIONAL_KEY_EXCHANGE);
+		this->invalid_link = TRUE;
+	}
+	else
+	{
+		link = notify->get_notification_data(notify);
+		if (this->initiator)
+		{
+			this->link = chunk_clone(link);
+		}
+		else if (!chunk_equals_const(this->link, link))
+		{
+			DBG1(DBG_IKE, "data in %N notify doesn't match", notify_type_names,
+				 ADDITIONAL_KEY_EXCHANGE);
+			this->invalid_link = TRUE;
+		}
+	}
+}
+
+METHOD(task_t, process_r_multi_ke, status_t,
+	private_ike_rekey_t *this, message_t *message)
+{
+	if (message->get_exchange_type(message) != IKE_FOLLOWUP_KE)
+	{
+		return FAILED;
+	}
+
+	charon->bus->set_sa(charon->bus, this->new_sa);
+	process_link(this, message);
+	this->ike_init->task.process(&this->ike_init->task, message);
+	charon->bus->set_sa(charon->bus, this->ike_sa);
+	return NEED_MORE;
+}
+
 METHOD(task_t, process_r, status_t,
 	private_ike_rekey_t *this, message_t *message)
 {
@@ -235,6 +304,8 @@ METHOD(task_t, process_r, status_t,
 		this->failed_temporarily = TRUE;
 		return NEED_MORE;
 	}
+	// FIXME: we should reply with TEMP_FAIL if we are actively rekeying (i.e.
+	// if there is an active task that is currently sending IKE_FOLLOWUP_KEs)
 
 	this->new_sa = charon->ike_sa_manager->checkout_new(charon->ike_sa_manager,
 							this->ike_sa->get_version(this->ike_sa), FALSE);
@@ -245,7 +316,7 @@ METHOD(task_t, process_r, status_t,
 	this->new_sa->inherit_pre(this->new_sa, this->ike_sa);
 	this->ike_init = ike_init_create(this->new_sa, FALSE, this->ike_sa);
 	this->ike_init->task.process(&this->ike_init->task, message);
-
+	charon->bus->set_sa(charon->bus, this->ike_sa);
 	return NEED_MORE;
 }
 
@@ -257,20 +328,46 @@ METHOD(task_t, build_r, status_t,
 		message->add_notify(message, TRUE, TEMPORARY_FAILURE, chunk_empty);
 		return SUCCESS;
 	}
-	if (this->new_sa == NULL)
+	if (this->invalid_link)
+	{
+		message->add_notify(message, TRUE, STATE_NOT_FOUND, chunk_empty);
+		return SUCCESS;
+	}
+	if (!this->new_sa)
 	{
 		/* IKE_SA/a CHILD_SA is in an unacceptable state, deny rekeying */
 		message->add_notify(message, TRUE, NO_PROPOSAL_CHOSEN, chunk_empty);
 		return SUCCESS;
 	}
-	if (this->ike_init->task.build(&this->ike_init->task, message) == FAILED)
+
+	charon->bus->set_sa(charon->bus, this->new_sa);
+	switch (this->ike_init->task.build(&this->ike_init->task, message))
 	{
-		this->ike_init->task.destroy(&this->ike_init->task);
-		this->ike_init = NULL;
-		charon->bus->set_sa(charon->bus, this->ike_sa);
-		return SUCCESS;
+		case FAILED:
+			this->ike_init->task.destroy(&this->ike_init->task);
+			this->ike_init = NULL;
+			charon->bus->set_sa(charon->bus, this->ike_sa);
+			return SUCCESS;
+		case NEED_MORE:
+			/* additional key exchanges, the value in the notify doesn't matter
+			 * to us as we have a windows size of 1 */
+			if (!this->link.ptr)
+			{
+				this->link = chunk_clone(chunk_from_chars(0x42));
+			}
+			message->add_notify(message, FALSE, ADDITIONAL_KEY_EXCHANGE,
+								this->link);
+			charon->bus->set_sa(charon->bus, this->ike_sa);
+			this->public.task.process = _process_r_multi_ke;
+			/* FIXME: handle collisions early somehow?
+			 * we should respond with TEMPORARY_FAILURE if we already are
+			 * actively sending IKE_FOLLOWUP_KE messages (but I guess not
+			 * if we have not yet received a response to our CREATE_CHILD_SA) */
+			return NEED_MORE;
+		default:
+			charon->bus->set_sa(charon->bus, this->ike_sa);
+			break;
 	}
-	charon->bus->set_sa(charon->bus, this->ike_sa);
 
 	if (this->ike_sa->get_state(this->ike_sa) != IKE_REKEYING)
 	{	/* in case of a collision we let the initiating task handle this */
@@ -319,9 +416,21 @@ METHOD(task_t, process_i, status_t,
 		return SUCCESS;
 	}
 
+	charon->bus->set_sa(charon->bus, this->new_sa);
+	if (message->get_notify(message, STATE_NOT_FOUND))
+	{
+		DBG1(DBG_IKE, "peer didn't like our %N notify data", notify_type_names,
+			 ADDITIONAL_KEY_EXCHANGE);
+		if (!conclude_undetected_collision(this))
+		{
+			schedule_delayed_rekey(this);
+		}
+		return SUCCESS;
+	}
 	switch (this->ike_init->task.process(&this->ike_init->task, message))
 	{
 		case FAILED:
+			charon->bus->set_sa(charon->bus, this->ike_sa);
 			/* rekeying failed, fallback to old SA */
 			if (!conclude_undetected_collision(this))
 			{
@@ -329,10 +438,29 @@ METHOD(task_t, process_i, status_t,
 			}
 			return SUCCESS;
 		case NEED_MORE:
-			/* bad dh group, try again */
-			this->ike_init->task.migrate(&this->ike_init->task, this->new_sa);
+			if (message->get_notify(message, INVALID_KE_PAYLOAD))
+			{	/* bad key exchange mechanism, try again */
+				this->ike_init->task.migrate(&this->ike_init->task,
+											 this->new_sa);
+				charon->bus->set_sa(charon->bus, this->ike_sa);
+				return NEED_MORE;
+			}
+			/* multiple key exchanges, continue with IKE_FOLLOWUP_KE */
+			process_link(this, message);
+			charon->bus->set_sa(charon->bus, this->ike_sa);
+			if (this->invalid_link)
+			{	/* we can't continue without notify */
+				// FIXME: is it likely that we receive one later?
+				if (!conclude_undetected_collision(this))
+				{
+					schedule_delayed_rekey(this);
+				}
+				return SUCCESS;
+			}
+			this->public.task.build = _build_i_multi_ke;
 			return NEED_MORE;
 		default:
+			charon->bus->set_sa(charon->bus, this->ike_sa);
 			break;
 	}
 
@@ -465,6 +593,7 @@ static void cleanup(private_ike_rekey_t *this)
 	DESTROY_IF(this->new_sa);
 	charon->bus->set_sa(charon->bus, cur_sa);
 	DESTROY_IF(this->collision);
+	chunk_free(&this->link);
 }
 
 METHOD(task_t, migrate, void,

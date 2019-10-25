@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2018 Tobias Brunner
+ * Copyright (C) 2006-2019 Tobias Brunner
  * Copyright (C) 2006 Daniel Roethlisberger
  * Copyright (C) 2005-2006 Martin Willi
  * Copyright (C) 2005 Jan Hutter
@@ -79,8 +79,10 @@ enum notify_type_t {
 	TEMPORARY_FAILURE = 43,
 	CHILD_SA_NOT_FOUND = 44,
 
+	/* draft-ietf-ipsecme-ikev2-multiple-ke */
+	STATE_NOT_FOUND = 8192,
 	/* IKE-ME, private use */
-	ME_CONNECT_FAILED = 8192,
+	ME_CONNECT_FAILED = 8193,
 
 	/* Windows error code */
 	MS_NOTIFY_STATUS = 12345,
@@ -159,6 +161,8 @@ enum notify_type_t {
 	PPK_IDENTITY = 16436,
 	/* No Postquantum Preshared Key Auth (draft-ietf-ipsecme-qr-ikev2) */
 	NO_PPK_AUTH = 16437,
+	/* draft-ietf-ipsecme-ikev2-intermediate */
+	INTERMEDIATE_EXCHANGE_SUPPORTED = 16438,
 	/* IKEv1 initial contact */
 	INITIAL_CONTACT_IKEV1 = 24578,
 	/* IKEv1 DPD */
@@ -178,6 +182,8 @@ enum notify_type_t {
 	ME_RESPONSE = 40968,
 	/* RADIUS attribute received/to send to a AAA backend */
 	RADIUS_ATTRIBUTE = 40969,
+	/* draft-ietf-ipsecme-ikev2-multiple-ke */
+	ADDITIONAL_KEY_EXCHANGE = 50205,
 };
 
 /**
