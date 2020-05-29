@@ -1,0 +1,5 @@
+pqsdk_tests
+*.lo
+*.la
+Makefile
+Makefile.in
