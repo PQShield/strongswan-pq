@@ -135,9 +135,10 @@ all|coverage|sonarcloud)
 			--disable-kernel-pfroute --disable-keychain
 			--disable-lock-profiler --disable-padlock --disable-fuzzing
 			--disable-osx-attr --disable-tkm --disable-uci
-			--disable-unwind-backtraces
-			--disable-svc --disable-dbghelp-backtraces --disable-socket-win
-			--disable-kernel-wfp --disable-kernel-iph --disable-winhttp"
+			--disable-unwind-backtraces --disable-soup --disable-unwind-backtraces
+			--disable-pqsdk-pqsdkd --disable-svc
+			--disable-dbghelp-backtraces --disable-socket-win --disable-kernel-wfp
+			--disable-kernel-iph --disable-winhttp"
 	# not enabled on the build server
 	CONFIG="$CONFIG --disable-af-alg"
 	if test "$TRAVIS_CPU_ARCH" != "amd64"; then

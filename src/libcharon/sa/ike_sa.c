@@ -824,6 +824,12 @@ METHOD(ike_sa_t, set_state, void,
 	private_ike_sa_t *this, ike_sa_state_t state)
 {
 	bool trigger_dpd = FALSE, keepalives = FALSE;
+	timeval_t ts;
+
+	if (state == IKE_CONNECTING) {
+		time_monotonic(&ts);
+		this->stats[STAT_ESTABLISHMENT_TIME_US] = (1000000*ts.tv_sec) + ts.tv_usec;
+	}
 
 	DBG2(DBG_IKE, "IKE_SA %s[%d] state change: %N => %N",
 		 get_name(this), this->unique_id,
@@ -841,7 +847,11 @@ METHOD(ike_sa_t, set_state, void,
 				uint32_t t;
 
 				/* calculate rekey, reauth and lifetime */
-				this->stats[STAT_ESTABLISHED] = time_monotonic(NULL);
+				this->stats[STAT_ESTABLISHED] = time_monotonic(&ts);
+				/* calculate estblishement time in us */
+				this->stats[STAT_ESTABLISHMENT_TIME_US] =
+					((1000000*ts.tv_sec) + ts.tv_usec)
+					- this->stats[STAT_ESTABLISHMENT_TIME_US];
 
 				/* schedule rekeying if we have a time which is smaller than
 				 * an already scheduled rekeying */
@@ -3163,6 +3173,7 @@ ike_sa_t * ike_sa_create(ike_sa_id_t *ike_sa_id, bool initiator,
 		.state = IKE_CREATED,
 		.stats[STAT_INBOUND] = time_monotonic(NULL),
 		.stats[STAT_OUTBOUND] = time_monotonic(NULL),
+		.stats[STAT_ESTABLISHMENT_TIME_US] = 0,
 		.my_auth = auth_cfg_create(),
 		.other_auth = auth_cfg_create(),
 		.my_auths = array_create(0, 0),

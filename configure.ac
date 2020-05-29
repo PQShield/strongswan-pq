@@ -70,6 +70,7 @@ ARG_WITH_SET([dev-headers],          [no], [install strongSwan development heade
 ARG_WITH_SET([printf-hooks],         [auto], [force the use of a specific printf hook implementation (auto, builtin, glibc, vstr).])
 ARG_WITH_SET([rubygemdir],           ["gem environment gemdir"], [path to install ruby gems to])
 ARG_WITH_SET([pythoneggdir],         ["main site-packages directory"], [path to install python eggs to to])
+ARG_WITH_SET([pqsdkdir],             [/opt/pqsdk], [path to pqsdk install dir])
 
 if test -n "$PKG_CONFIG"; then
 	systemdsystemunitdir_default=$($PKG_CONFIG --variable=systemdsystemunitdir systemd)
@@ -165,6 +166,8 @@ ARG_DISBL_SET([sha1],           [disable SHA1 software implementation plugin.])
 ARG_DISBL_SET([sha2],           [disable SHA256/SHA384/SHA512 software implementation plugin.])
 ARG_ENABL_SET([sha3],           [enable SHA3_224/SHA3_256/SHA3_384/SHA3_512 software implementation plugin.])
 ARG_DISBL_SET([xcbc],           [disable xcbc crypto implementation plugin.])
+ARG_ENABL_SET([pqsdk-pqsdkd],   [enable PQShield's PQSDK:PQSDKd plugin.])
+
 # encoding/decoding plugins
 ARG_DISBL_SET([dnskey],         [disable DNS RR key decoding plugin.])
 ARG_DISBL_SET([pem],            [disable PEM decoding plugin.])
@@ -330,6 +333,7 @@ ARG_ENABL_SET([leak-detective], [enable malloc hooks to find memory leaks.])
 ARG_ENABL_SET([lock-profiler],  [enable lock/mutex profiling code.])
 ARG_ENABL_SET([log-thread-ids], [use thread ID, if available, instead of an incremented value starting from 1, to identify threads.])
 ARG_ENABL_SET([monolithic],     [build monolithic version of libstrongswan that includes all enabled plugins. Similarly, the plugins of charon are assembled in libcharon.])
+ARG_ENABL_SET([libgsl],    		[enable statistics calculation with GNU Scientific Library.])
 
 # ===================================
 #  option to disable default options
@@ -1384,6 +1388,12 @@ if test "x$ss_cv_static_plugin_constructors" = xyes; then
 	fi
 fi
 
+if test x$pqsdk_pqsdkd = xtrue; then
+	AC_SUBST(PQSDK_LIB_DIR, [$pqsdkdir/lib])
+	AC_SUBST(PQSDK_INC_DIR, [$pqsdkdir/include])
+	AC_SUBST(PQ_MESSAGE_LIB, [pq_message_lib])
+fi
+
 # ===============================================
 #  collect plugin list for strongSwan components
 # ===============================================
@@ -1550,6 +1560,7 @@ ADD_PLUGIN([uci],                  [c charon])
 ADD_PLUGIN([addrblock],            [c charon])
 ADD_PLUGIN([unity],                [c charon])
 ADD_PLUGIN([counters],             [c charon])
+ADD_PLUGIN([pqsdk-pqsdkd],         [s charon scripts nm cmd])
 
 AC_SUBST(charon_plugins)
 AC_SUBST(starter_plugins)
@@ -1636,6 +1647,7 @@ AM_CONDITIONAL(USE_NTRU, test x$ntru = xtrue)
 AM_CONDITIONAL(USE_NEWHOPE, test x$newhope = xtrue)
 AM_CONDITIONAL(USE_BLISS, test x$bliss = xtrue)
 AM_CONDITIONAL(USE_DRBG, test x$drbg = xtrue)
+AM_CONDITIONAL(USE_PQSDK_PQSDKD, test x$pqsdk_pqsdkd = xtrue)
 
 #  charon plugins
 # ----------------
@@ -1919,6 +1931,7 @@ AC_CONFIG_FILES([
 	src/libstrongswan/plugins/bliss/tests/Makefile
 	src/libstrongswan/plugins/newhope/Makefile
 	src/libstrongswan/plugins/newhope/tests/Makefile
+	src/libstrongswan/plugins/pqsdk/pqsdkd/Makefile
 	src/libstrongswan/plugins/test_vectors/Makefile
 	src/libstrongswan/tests/Makefile
 	src/libipsec/Makefile

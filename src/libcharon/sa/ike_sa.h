@@ -265,7 +265,8 @@ enum statistic_t {
 	STAT_INBOUND,
 	/** Timestamp of last outbound IKE packet */
 	STAT_OUTBOUND,
-
+	/** IKE SA establishement time in microseconds */
+	STAT_ESTABLISHMENT_TIME_US,
 	STAT_MAX
 };
 

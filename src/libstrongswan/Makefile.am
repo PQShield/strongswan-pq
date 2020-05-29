@@ -673,6 +673,13 @@ if MONOLITHIC
 endif
 endif
 
+if USE_PQSDK_PQSDKD
+  SUBDIRS += plugins/pqsdk/pqsdkd
+if MONOLITHIC
+  libstrongswan_la_LIBADD += plugins/pqsdk/pqsdkd/libstrongswan-pqsdk-pqsdkd.la
+endif
+endif
+
 if USE_TEST_VECTORS
   SUBDIRS += plugins/test_vectors
 if MONOLITHIC

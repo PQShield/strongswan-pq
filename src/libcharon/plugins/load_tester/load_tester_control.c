@@ -21,6 +21,12 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <errno.h>
+#include <math.h>
+
+#ifdef USE_GSL
+#include <gsl/gsl_sort_ulong.h>
+#include <gsl/gsl_statistics_ulong.h>
+#endif
 
 #include <daemon.h>
 #include <collections/hashtable.h>
@@ -82,6 +88,16 @@ struct init_listener_t {
 	 * Condvar to wait for completion
 	 */
 	condvar_t *condvar;
+
+	/**
+	 * Table of IKE handshake duration.
+	 */
+	struct {
+		/** Table storing results */
+		unsigned long *results;
+		/** Points to the next empty element in the table */
+		size_t idx;
+	} ike_durations;
 };
 
 /**
@@ -143,6 +159,10 @@ METHOD(listener_t, ike_state_change, bool,
 
 		if (match)
 		{
+			if (state == IKE_ESTABLISHED) {
+				this->ike_durations.results[this->ike_durations.idx++] =
+					ike_sa->get_statistic(ike_sa, STAT_ESTABLISHMENT_TIME_US);
+			}
 			this->condvar->signal(this->condvar);
 			fprintf(this->stream, state == IKE_ESTABLISHED ? "+" : "-");
 			fflush(this->stream);
@@ -184,6 +204,9 @@ static bool on_accept(private_load_tester_control_t *this, stream_t *io)
 	u_int i, count, failed = 0, delay = 0;
 	char buf[16] = "";
 	FILE *stream;
+#ifdef USE_GSL
+	float q50, q95, mean, sd;
+#endif
 
 	stream = io->get_file(io);
 	if (!stream)
@@ -212,6 +235,10 @@ static bool on_accept(private_load_tester_control_t *this, stream_t *io)
 		.completed = hashtable_create((void*)hash, (void*)equals, count),
 		.mutex = mutex_create(MUTEX_TYPE_DEFAULT),
 		.condvar = condvar_create(CONDVAR_TYPE_DEFAULT),
+		.ike_durations = {
+			.results = malloc(count * sizeof(unsigned long)),
+			.idx = 0
+		},
 	);
 
 	charon->bus->add_listener(charon->bus, &listener->listener);
@@ -267,10 +294,32 @@ static bool on_accept(private_load_tester_control_t *this, stream_t *io)
 
 	charon->bus->remove_listener(charon->bus, &listener->listener);
 
+	// Print stats for IKE establishement times
+#ifdef USE_GSL
+	gsl_sort_ulong(listener->ike_durations.results, 1, listener->ike_durations.idx);
+	q50 = gsl_stats_ulong_quantile_from_sorted_data(
+		listener->ike_durations.results, 1, listener->ike_durations.idx, 0.5)/1000;
+	q95 = gsl_stats_ulong_quantile_from_sorted_data(
+		listener->ike_durations.results, 1, listener->ike_durations.idx, 0.95)/1000;
+	mean = gsl_stats_ulong_mean(
+		listener->ike_durations.results, 1, listener->ike_durations.idx)/1000;
+	sd = gsl_stats_ulong_sd(
+		listener->ike_durations.results, 1, listener->ike_durations.idx)/1000;
+	fprintf(stream,
+		"\n IKE establishment stats for %lu connections in ms\n"
+		"+------------+------------+------------+------------+\n"
+		"| Q50        | Q95        | Mean       | StdDev     |\n"
+		"+------------+------------+------------+------------+\n"
+		"| %10.3f | %10.3f | %10.3f | %10.3f |\n"
+		"+------------+------------+------------+------------+\n",
+		listener->ike_durations.idx, q50, q95, mean, sd);
+#endif
+
 	listener->initiated->destroy(listener->initiated);
 	listener->completed->destroy(listener->completed);
 	listener->mutex->destroy(listener->mutex);
 	listener->condvar->destroy(listener->condvar);
+	free(listener->ike_durations.results);
 	free(listener);
 
 	fprintf(stream, "\n");
