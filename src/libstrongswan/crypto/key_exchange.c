@@ -57,7 +57,7 @@ ENUM_NEXT(key_exchange_method_names, NTRU_112_BIT, NTRU_256_BIT, MODP_NULL,
 	"NTRU_256");
 ENUM_NEXT(key_exchange_method_names, NH_128_BIT, NH_128_BIT, NTRU_256_BIT,
 	"NEWHOPE_128");
-ENUM_NEXT(key_exchange_method_names, KE_BIKE1_L1, KE_SIKE_L5, NH_128_BIT,
+ENUM_NEXT(key_exchange_method_names, KE_BIKE1_L1, KE_RND5_5D_CCA_L5, NH_128_BIT,
 	"KE_BIKE1_L1",
 	"KE_BIKE1_L3",
 	"KE_BIKE1_L5",
@@ -88,8 +88,11 @@ ENUM_NEXT(key_exchange_method_names, KE_BIKE1_L1, KE_SIKE_L5, NH_128_BIT,
 	"KE_SIKE_L1",
 	"KE_SIKE_L2",
 	"KE_SIKE_L3",
-	"KE_SIKE_L5");
-ENUM_NEXT(key_exchange_method_names, MODP_CUSTOM, MODP_CUSTOM, KE_SIKE_L5,
+	"KE_SIKE_L5",
+	"KE_RND5_5D_CCA_L1",
+	"KE_RND5_5D_CCA_L3",
+	"KE_RND5_5D_CCA_L5");
+ENUM_NEXT(key_exchange_method_names, MODP_CUSTOM, MODP_CUSTOM, KE_RND5_5D_CCA_L5,
 	"MODP_CUSTOM");
 ENUM_END(key_exchange_method_names, MODP_CUSTOM);
 
@@ -644,6 +647,9 @@ bool key_exchange_is_kem(key_exchange_method_t ke)
 		case KE_SIKE_L2:
 		case KE_SIKE_L3:
 		case KE_SIKE_L5:
+		case KE_RND5_5D_CCA_L1:
+		case KE_RND5_5D_CCA_L3:
+		case KE_RND5_5D_CCA_L5:
 			return TRUE;
 		default:
 			return FALSE;
@@ -740,6 +746,9 @@ bool key_exchange_verify_pubkey(key_exchange_method_t ke, chunk_t value)
 		case KE_SIKE_L2:
 		case KE_SIKE_L3:
 		case KE_SIKE_L5:
+		case KE_RND5_5D_CCA_L1:
+		case KE_RND5_5D_CCA_L3:
+		case KE_RND5_5D_CCA_L5:
 			/* verification currently not supported, do in plugin */
 			valid = FALSE;
 			break;
