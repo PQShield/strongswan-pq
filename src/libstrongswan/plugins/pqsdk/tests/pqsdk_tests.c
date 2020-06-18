@@ -20,6 +20,8 @@
 
 const int count = 10;
 
+typedef pqsdk_kem_t* (*kem_creator)(key_exchange_method_t method);
+
 // List of KEMs used by all of those tests
 static int supported_KEMs[] = {
 	KE_FRODO_SHAKE_L1,
@@ -38,6 +40,8 @@ static int supported_KEMs[] = {
 	KE_RND5_5D_CCA_L5,
 };
 
+static kem_creator ctor = NULL;
+
 START_TEST(test_pqsdk_roundtrip) {
 	const key_exchange_method_t method = supported_KEMs[_i];
 	chunk_t pk, ct, i_secret, r_secret;
@@ -48,13 +52,13 @@ START_TEST(test_pqsdk_roundtrip) {
 	clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start);
 	for (k = 0; k < count; k++) {
 		// Initiator: create a key pair and return public key
-		i_ke = (key_exchange_t*)pqsdk_kem_create(method);
+		i_ke = (key_exchange_t*)ctor(method);
 		ck_assert(i_ke);
 		ck_assert(i_ke->get_method(i_ke) == method);
 		ck_assert(i_ke->get_public_key(i_ke, &pk));
 
 		// Responder: encapsulate with initiators public key
-		r_ke = (key_exchange_t*)pqsdk_kem_create(method);
+		r_ke = (key_exchange_t*)ctor(method);
 		ck_assert(r_ke);
 		ck_assert(r_ke->set_public_key(r_ke, pk));
 		// get_public performs encapsulation and returns shared secret
@@ -91,17 +95,17 @@ START_TEST(test_pqsdk_negative_unexpcted_input) {
 	key_exchange_t *i_ke, *r_ke;
 
 	// unsupported KEM
-	ck_assert(!pqsdk_kem_create(KE_BIKE1_L1));
+	ck_assert(!ctor(KE_BIKE1_L1));
 	// not a KEM
-	ck_assert(!pqsdk_kem_create(CURVE_25519));
+	ck_assert(!ctor(CURVE_25519));
 
 	// generate public key
-	i_ke = (key_exchange_t*)pqsdk_kem_create(method);
+	i_ke = (key_exchange_t*)ctor(method);
 	ck_assert(i_ke->get_public_key(i_ke, &pk));
 	i_ke->destroy(i_ke);
 
 	// generate ciphertext
-	r_ke = (key_exchange_t*)pqsdk_kem_create(method);
+	r_ke = (key_exchange_t*)ctor(method);
 	ck_assert(r_ke->set_public_key(r_ke, pk));
 	ck_assert(r_ke->get_public_key(r_ke, &ct));
 	r_ke->destroy(r_ke);
@@ -110,7 +114,7 @@ START_TEST(test_pqsdk_negative_unexpcted_input) {
 	fake_ct = chunk_create((u_char*)malloc(ct.len), ct.len);
 
 	// try setting wrong length public key
-	r_ke = (key_exchange_t*)pqsdk_kem_create(method);
+	r_ke = (key_exchange_t*)ctor(method);
 	fake_pk.len--;
 	ck_assert(!r_ke->set_public_key(r_ke, fake_pk));
 	ck_assert(!r_ke->get_shared_secret(r_ke, &ss));
@@ -127,7 +131,7 @@ START_TEST(test_pqsdk_negative_unexpcted_input) {
 	chunk_free(&fake_pk);
 
 	// try setting wrong length ciphertext
-	i_ke = (key_exchange_t*)pqsdk_kem_create(method);
+	i_ke = (key_exchange_t*)ctor(method);
 
 	// sets i_ke into "initiator state"
 	ck_assert(i_ke->get_public_key(i_ke, &fake_pk));
@@ -151,11 +155,11 @@ START_TEST(test_pqsdk_negative_wrong_shared_secret) {
 	key_exchange_t *i_ke, *r_ke;
 
 	// Initiator
-	i_ke = (key_exchange_t*)pqsdk_kem_create(method);
+	i_ke = (key_exchange_t*)ctor(method);
 	ck_assert(i_ke->get_public_key(i_ke, &pk));
 
 	// Responder: encapsulate with initiators public key
-	r_ke = (key_exchange_t*)pqsdk_kem_create(method);
+	r_ke = (key_exchange_t*)ctor(method);
 	ck_assert(r_ke->set_public_key(r_ke, pk));
 	ck_assert(r_ke->get_public_key(r_ke, &ct));
 	ck_assert(r_ke->get_shared_secret(r_ke, &r_secret));
@@ -183,25 +187,40 @@ START_TEST(test_pqsdk_negative_wrong_shared_secret) {
 }
 END_TEST
 
-Suite *pqsdk_pqtls_suite_create()
-{
-	Suite *s;
+static void setup_pqtls(void) {
+	ctor = pqsdk_kem_create;
+}
+
+static void teardown(void) {ctor = 0;}
+
+void tcase_add_cases_with_setup(Suite *s, void(*setup)(void)) {
 	TCase *tc;
-
-	s = suite_create("pqsdk");
-
 	tc = tcase_create("roundtrip");
-	test_case_set_timeout(tc, 30);
+	test_case_set_timeout(tc, 5);
+	tcase_add_checked_fixture(tc, setup, teardown);
 	tcase_add_loop_test(tc, test_pqsdk_roundtrip, 0, countof(supported_KEMs));
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("unexpected_input");
+	tcase_add_checked_fixture(tc, setup, teardown);
 	tcase_add_loop_test(tc, test_pqsdk_negative_unexpcted_input, 0, countof(supported_KEMs));
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("ensure_wrong_result_from_decaps_on_wrong_ct");
+	tcase_add_checked_fixture(tc, setup, teardown);
 	tcase_add_loop_test(tc, test_pqsdk_negative_wrong_shared_secret, 0, countof(supported_KEMs));
 	suite_add_tcase(s, tc);
+}
+
+Suite *pqsdk_pqtls_suite_create()
+{
+	Suite *s;
+
+	s = suite_create("pqsdk");
+#ifdef USE_PQSDK_PQTLS
+	// test PQSDK:PQTLS
+	tcase_add_cases_with_setup(s, setup_pqtls);
+#endif
 
 	return s;
 }
