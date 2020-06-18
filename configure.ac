@@ -166,6 +166,7 @@ ARG_DISBL_SET([sha2],           [disable SHA256/SHA384/SHA512 software implement
 ARG_ENABL_SET([sha3],           [enable SHA3_224/SHA3_256/SHA3_384/SHA3_512 software implementation plugin.])
 ARG_DISBL_SET([xcbc],           [disable xcbc crypto implementation plugin.])
 ARG_ENABL_SET([pqsdk-pqtls],    [enable PQShield's PQSDK:PQTLS plugin.])
+ARG_ENABL_SET([pqsdk-pqsdkd],   [enable PQShield's PQSDK:PQSDKd plugin.])
 # encoding/decoding plugins
 ARG_DISBL_SET([dnskey],         [disable DNS RR key decoding plugin.])
 ARG_DISBL_SET([pem],            [disable PEM decoding plugin.])
@@ -1552,6 +1553,7 @@ ADD_PLUGIN([addrblock],            [c charon])
 ADD_PLUGIN([unity],                [c charon])
 ADD_PLUGIN([counters],             [c charon])
 ADD_PLUGIN([pqsdk-pqtls],          [s charon scripts nm cmd])
+ADD_PLUGIN([pqsdk-pqsdkd],         [s charon scripts nm cmd])
 
 AC_SUBST(charon_plugins)
 AC_SUBST(starter_plugins)
@@ -1639,6 +1641,7 @@ AM_CONDITIONAL(USE_NEWHOPE, test x$newhope = xtrue)
 AM_CONDITIONAL(USE_BLISS, test x$bliss = xtrue)
 AM_CONDITIONAL(USE_DRBG, test x$drbg = xtrue)
 AM_CONDITIONAL(USE_PQSDK_PQTLS, test x$pqsdk_pqtls = xtrue)
+AM_CONDITIONAL(USE_PQSDK_PQSDKD, test x$pqsdk_pqsdkd = xtrue)
 
 #  charon plugins
 # ----------------
@@ -1923,6 +1926,7 @@ AC_CONFIG_FILES([
 	src/libstrongswan/plugins/newhope/Makefile
 	src/libstrongswan/plugins/newhope/tests/Makefile
 	src/libstrongswan/plugins/pqsdk/pqtls/Makefile
+	src/libstrongswan/plugins/pqsdk/pqsdkd/Makefile
 	src/libstrongswan/plugins/pqsdk/tests/Makefile
 	src/libstrongswan/plugins/test_vectors/Makefile
 	src/libstrongswan/tests/Makefile

@@ -120,7 +120,7 @@ METHOD(plugin_t, get_features, int,
     private_pqsdk_pqtls_plugin_t *this, plugin_feature_t *features[])
 {
     static plugin_feature_t f[] = {
-        PLUGIN_REGISTER(KE, pqsdk_kem_create),
+        PLUGIN_REGISTER(KE, pqtls_kem_create),
             PLUGIN_PROVIDE(KE, KE_FRODO_SHAKE_L1),
             PLUGIN_PROVIDE(KE, KE_FRODO_SHAKE_L3),
             PLUGIN_PROVIDE(KE, KE_FRODO_SHAKE_L5),

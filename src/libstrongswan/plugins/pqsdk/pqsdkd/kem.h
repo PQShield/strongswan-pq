@@ -14,22 +14,23 @@
  */
 
 /**
- * @defgroup pqsdk_kem_ka pqsdk_kem_ka
+ * @defgroup pqsdkd_kem_ka pqsdkd_kem_ka
  * @{ @ingroup pqsdk_p
  */
 
-#ifndef PQSDK_KEM_H_
-#define PQSDK_KEM_H_
-
-typedef struct pqtls_kem_t pqtls_kem_t;
+#ifndef PQSDKD_KEM_H_
+#define PQSDKD_KEM_H_
 
 #include <crypto/key_exchange.h>
 #include <openssl/evp.h>
 
+typedef struct pqsdkd_kem_t pqsdkd_kem_t;
+
 /**
- * Post-quantum key exchange implementation supported by PQSDK.
+ * Post-quantum key exchange implementation supported
+ * by PQSDKd.
  */
-struct pqtls_kem_t {
+struct pqsdkd_kem_t {
 
   /**
    * Implements the key_exchange_t interface. Must be first
@@ -38,8 +39,17 @@ struct pqtls_kem_t {
   key_exchange_t ke;
 
   /**
-   * Ciphertext. On the responder side reused to store public
-   * key.
+   * Public key
+   */
+  chunk_t pk;
+
+  /**
+   * Secret key
+   */
+  chunk_t sk;
+
+  /**
+   * Ciphertext
    */
   chunk_t ct;
 
@@ -52,19 +62,15 @@ struct pqtls_kem_t {
    * available to use.
    */
   bool has_secret;
-  /**
-   * Handle for PQSDK keypair used by initiator.
-   */
-  EVP_PKEY *key;
 };
 
 /**
- * Creates a new pqtls_kem_t object.
+ * Creates a new pqsdkd_kem_t object.
  *
  * @param method    QSKE mechanism number
- * @return          pqtls_kem_t object, NULL if not
+ * @return          pqsdkd_kem_t object, NULL if not
  * supported
  */
-pqtls_kem_t *pqtls_kem_create(key_exchange_method_t method);
+pqsdkd_kem_t *pqsdkd_kem_create(key_exchange_method_t method);
 
-#endif /** PQSDK_KEM_H_ @}*/
+#endif /** PQSDKD_KEM_H_ @}*/

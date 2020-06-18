@@ -16,11 +16,12 @@
 #include "test_suite.h"
 #include <library.h>
 #include <time.h>
-#include "kem.h"
+#include "pqtls/kem.h"
+#include "pqsdkd/kem.h"
 
 const int count = 10;
 
-typedef pqsdk_kem_t* (*kem_creator)(key_exchange_method_t method);
+typedef key_exchange_t* (*kem_creator_t)(key_exchange_method_t method);
 
 // List of KEMs used by all of those tests
 static int supported_KEMs[] = {
@@ -40,7 +41,7 @@ static int supported_KEMs[] = {
 	KE_RND5_5D_CCA_L5,
 };
 
-static kem_creator ctor = NULL;
+static kem_creator_t ctor = NULL;
 
 START_TEST(test_pqsdk_roundtrip) {
 	const key_exchange_method_t method = supported_KEMs[_i];
@@ -187,9 +188,17 @@ START_TEST(test_pqsdk_negative_wrong_shared_secret) {
 }
 END_TEST
 
+#ifdef USE_PQSDK_PQTLS
 static void setup_pqtls(void) {
-	ctor = pqsdk_kem_create;
+	ctor = (kem_creator_t)pqtls_kem_create;
 }
+#endif
+
+#ifdef USE_PQSDK_PQSDKD
+static void setup_pqsdkd(void) {
+	ctor = (kem_creator_t)pqsdkd_kem_create;
+}
+#endif
 
 static void teardown(void) {ctor = 0;}
 
@@ -220,6 +229,10 @@ Suite *pqsdk_pqtls_suite_create()
 #ifdef USE_PQSDK_PQTLS
 	// test PQSDK:PQTLS
 	tcase_add_cases_with_setup(s, setup_pqtls);
+#endif
+#ifdef USE_PQSDK_PQSDKD
+	// test PQSDK:PQTLS
+	tcase_add_cases_with_setup(s, setup_pqsdkd);
 #endif
 
 	return s;

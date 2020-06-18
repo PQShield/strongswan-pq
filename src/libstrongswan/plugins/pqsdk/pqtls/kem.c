@@ -18,7 +18,6 @@
 #include <crypto/key_exchange.h>
 #include "kem.h"
 
-
 // Returns size of the shared secret in the composite key exchange
 #define EVP_PKEY_CTRL_PQTLS_GET_SS_SIZE 100 + 0
 // Returns size of the ciphertext in the composite key exchange
@@ -59,7 +58,7 @@ typedef struct private_pqsdk_pqtls_kem_t {
 	/**
 	 * Public interface for PQSDK.
 	 */
-	struct pqsdk_kem_t public;
+	struct pqtls_kem_t public;
 
 	/**
 	 * Key exchange method
@@ -243,7 +242,7 @@ end:
 	return ret;
 }
 
-struct pqsdk_kem_t *pqsdk_kem_create(key_exchange_method_t method)
+struct pqtls_kem_t *pqtls_kem_create(key_exchange_method_t method)
 {
 	struct private_pqsdk_pqtls_kem_t *this;
 	int nid = NID_undef;

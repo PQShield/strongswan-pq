@@ -29,6 +29,8 @@ static test_configuration_t tests[] = {
 };
 
 static bool test_runner_init(bool init) {
+	lib->settings->set_str(lib->settings, "%s.plugins.pqsdk-pqsdkd.socket_path",
+		"/tmp/pqsdkd.ut.sock", lib->ns);
 	if (init) {
 		char *plugins, *plugindir;
 
