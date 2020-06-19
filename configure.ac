@@ -1153,6 +1153,16 @@ if test x$openssl = xtrue; then
 	AC_CHECK_HEADER([openssl/evp.h],,[AC_MSG_ERROR([OpenSSL header openssl/evp.h not found!])])
 fi
 
+if test x$pqsdk_pqsdkd = xtrue; then
+	AC_CHECK_LIB([pq_message_lib],[deserialize_response_header],[LIBS="$LIBS"],
+		[AC_MSG_RESULT([no]);pq_message_lib=""],[$DLLIB])
+	AC_SUBST(PQ_MESSAGE_LIB, [pq_message_lib])
+	AC_SUBST(PQSDK_CRYPTO_LIB, [crypto])
+	AC_SUBST(PQSDK_LIB_DIR, [/opt/pqsdk/lib])
+	AC_SUBST(PQSDK_INC_DIR, [/opt/pqsdkd/include])
+	AC_CHECK_HEADER([pq_message_lib.h],,[AC_MSG_ERROR([PQSDKd header pq_message_lib.h not found!])])
+fi
+
 if test x$wolfssl = xtrue; then
 	PKG_CHECK_MODULES(wolfssl, [wolfssl])
 	AC_SUBST(wolfssl_CFLAGS)

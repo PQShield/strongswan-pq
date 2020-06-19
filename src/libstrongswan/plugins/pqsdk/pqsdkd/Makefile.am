@@ -2,7 +2,7 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/libstrongswan
 
 AM_CFLAGS = \
-	$(PLUGIN_CFLAGS) -I/opt/pqsdk/includes
+	$(PLUGIN_CFLAGS) -I$(PQSDK_INC_DIR)
 
 if MONOLITHIC
 noinst_LTLIBRARIES = libstrongswan-pqsdk-pqsdkd.la
@@ -11,13 +11,13 @@ plugin_LTLIBRARIES = libstrongswan-pqsdk-pqsdkd.la
 endif
 
 libstrongswan_pqsdk_pqsdkd_la_SOURCES = \
-	pqsdkd_plugin.c               	\
+	pqsdkd_plugin.c						\
 	kem.c
 
 libstrongswan_pqsdk_pqsdkd_la_LDFLAGS = \
-	-L/opt/pqsdk/lib 		\
-	-module                         \
+	-L$(PQSDK_LIB_DIR) 					\
+	-module								\
 	-avoid-version
 
 libstrongswan_pqsdk_pqsdkd_la_LIBADD  = \
-	-lcrypto -lpq_message_lib
+	-l$(PQSDK_CRYPTO_LIB) -l$(PQ_MESSAGE_LIB)
