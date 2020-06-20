@@ -22,7 +22,6 @@
 #define PQSDKD_KEM_H_
 
 #include <crypto/key_exchange.h>
-#include <openssl/evp.h>
 
 typedef struct pqsdkd_kem_t pqsdkd_kem_t;
 
