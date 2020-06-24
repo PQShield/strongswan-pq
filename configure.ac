@@ -70,6 +70,7 @@ ARG_WITH_SET([dev-headers],          [no], [install strongSwan development heade
 ARG_WITH_SET([printf-hooks],         [auto], [force the use of a specific printf hook implementation (auto, builtin, glibc, vstr).])
 ARG_WITH_SET([rubygemdir],           ["gem environment gemdir"], [path to install ruby gems to])
 ARG_WITH_SET([pythoneggdir],         ["main site-packages directory"], [path to install python eggs to to])
+ARG_WITH_SET([pqsdkdir],             [/opt/pqsdk], [path to pqsdk install dir])
 
 if test -n "$PKG_CONFIG"; then
 	systemdsystemunitdir_default=$($PKG_CONFIG --variable=systemdsystemunitdir systemd)
@@ -1153,16 +1154,6 @@ if test x$openssl = xtrue; then
 	AC_CHECK_HEADER([openssl/evp.h],,[AC_MSG_ERROR([OpenSSL header openssl/evp.h not found!])])
 fi
 
-if test x$pqsdk_pqsdkd = xtrue; then
-	AC_CHECK_LIB([pq_message_lib],[deserialize_response_header],[LIBS="$LIBS"],
-		[AC_MSG_RESULT([no]);pq_message_lib=""],[$DLLIB])
-	AC_SUBST(PQ_MESSAGE_LIB, [pq_message_lib])
-	AC_SUBST(PQSDK_CRYPTO_LIB, [crypto])
-	AC_SUBST(PQSDK_LIB_DIR, [/opt/pqsdk/lib])
-	AC_SUBST(PQSDK_INC_DIR, [/opt/pqsdkd/include])
-	AC_CHECK_HEADER([pq_message_lib.h],,[AC_MSG_ERROR([PQSDKd header pq_message_lib.h not found!])])
-fi
-
 if test x$wolfssl = xtrue; then
 	PKG_CHECK_MODULES(wolfssl, [wolfssl])
 	AC_SUBST(wolfssl_CFLAGS)
@@ -1394,6 +1385,13 @@ if test "x$ss_cv_static_plugin_constructors" = xyes; then
 	if test "$PYTHON" = ":"; then
 		AC_MSG_FAILURE([Python is required to resolve plugin constructors statically])
 	fi
+fi
+
+if test x$pqsdk_pqsdkd = xtrue; then
+	AC_SUBST(PQ_MESSAGE_LIB, [pq_message_lib])
+	AC_SUBST(PQSDK_CRYPTO_LIB, [crypto])
+	AC_SUBST(PQSDK_LIB_DIR, [$pqsdkdir/lib])
+	AC_SUBST(PQSDK_INC_DIR, [$pqsdkdir/include])
 fi
 
 # ===============================================
