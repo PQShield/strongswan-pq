@@ -25,6 +25,7 @@
 #define PQSDKD_PLUGIN_H_
 
 #include <plugins/plugin.h>
+#include <stdbool.h>
 
 typedef struct pqsdkd_plugin_t pqsdkd_plugin_t;
 
@@ -35,30 +36,9 @@ typedef struct pqsdkd_plugin_t pqsdkd_plugin_t;
 struct pqsdkd_plugin_t {
 
   /**
-   * implements plugin interface
+   * Implements plugin interface
    */
   plugin_t plugin;
 };
-
-/**
- * PQSDKd communication context. Stores file descriptor
- * for listener and the one returned by accept().
- */
-typedef struct comm_t {
-  /**
-   * Path to PQSDKd socket, read from configuration file.
-   */
-  const char* socket_path;
-
-  /**
-   * Listen socket.
-   */
-  int fd;
-
-  /**
-   * Acceptor socket used to send requests to PQSDKd
-   */
-  int req;
-} comm_t;
 
 #endif /** PQSDKD_PLUGIN_H_ @}*/

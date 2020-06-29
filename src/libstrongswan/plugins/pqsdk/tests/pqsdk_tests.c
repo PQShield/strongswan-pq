@@ -19,6 +19,10 @@
 #include "pqtls/kem.h"
 #include "pqsdkd/kem.h"
 
+#ifdef USE_PQSDK_PQSDKD
+#include "pqsdkd/comm.h"
+#endif // USE_PQSDK_PQSDKD
+
 const int count = 10;
 
 typedef key_exchange_t* (*kem_creator_t)(key_exchange_method_t method);
@@ -200,25 +204,100 @@ static void setup_pqsdkd(void) {
 }
 #endif
 
-static void teardown(void) {ctor = 0;}
+#ifdef USE_PQSDK_PQSDKD
+START_TEST(test_pqsdkd_connect) {
+	comm_t *el = NULL;
+	linked_list_t *connection_list;
+
+	connection_list = lib->get(lib, "pqsdkd-connectors-list");
+	ck_assert(connection_list != NULL);
+	el = comm_lock_next(connection_list);
+	ck_assert(el != NULL);
+
+	ck_assert(el->socket_path);
+	ck_assert(el->stream);
+	ck_assert(el->id != 0);
+	ck_assert(el->is_used);
+	comm_unlock(connection_list, el->id);
+
+	// set t/o
+	// force reconnect
+	// check if reconnected
+}
+END_TEST
+
+START_TEST(test_pqsdkd_comm) {
+	linked_list_t *ltmp;
+	comm_t *comm1 = (comm_t*)malloc(sizeof(*comm1));
+	comm_t *comm2 = (comm_t*)malloc(sizeof(*comm2));
+
+	ltmp = linked_list_create();
+	comm1->id = 1;
+	comm2->id = 2;
+	comm1->stream = comm2 ->stream = NULL;
+	ck_assert(ltmp->get_count(ltmp) == 0);
+	ck_assert(comm_add(ltmp, comm1));
+	ck_assert(ltmp->get_count(ltmp) == 1);
+	ck_assert(!comm_add(ltmp, comm1));
+	ck_assert(ltmp->get_count(ltmp) == 1);
+	ck_assert(comm_add(ltmp, comm2));
+	ck_assert(ltmp->get_count(ltmp) == 2);
+
+	comm_t *c1 = NULL, *c2 = NULL, *c3 = NULL;
+	ck_assert((c1 = comm_lock_next(ltmp)));
+	ck_assert((c2 = comm_lock_next(ltmp)));
+	ck_assert(!(c3 = comm_lock_next(ltmp)));
+
+	ck_assert(c1->is_used);
+	ck_assert(c2->is_used);
+	ck_assert(c1->id == 1);
+	ck_assert(c2->id == 2);
+	ck_assert(c1->id != c2->id);
+
+	comm_unlock(ltmp, c2->id);
+	c2 = NULL;
+	ck_assert((c2 = comm_lock_next(ltmp)));
+	ck_assert(c2->id == 2);
+
+	comm_unlock(ltmp, c1->id);
+	ck_assert((c1 = comm_get_by_id(ltmp, 1)));
+	ck_assert(!(c3 = comm_get_by_id(ltmp, 3)));
+
+	comm_clean_list(ltmp);
+	ck_assert(ltmp->get_count(ltmp) == 0);
+	ltmp->destroy(ltmp);
+	ltmp = NULL;
+	comm_clean_list(ltmp);
+}
+END_TEST
+#endif
 
 void tcase_add_cases_with_setup(Suite *s, void(*setup)(void)) {
 	TCase *tc;
+
 	tc = tcase_create("roundtrip");
 	test_case_set_timeout(tc, 5);
-	tcase_add_checked_fixture(tc, setup, teardown);
+	tcase_add_checked_fixture(tc, setup, NULL);
 	tcase_add_loop_test(tc, test_pqsdk_roundtrip, 0, countof(supported_KEMs));
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("unexpected_input");
-	tcase_add_checked_fixture(tc, setup, teardown);
+	tcase_add_checked_fixture(tc, setup, NULL);
 	tcase_add_loop_test(tc, test_pqsdk_negative_unexpcted_input, 0, countof(supported_KEMs));
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("ensure_wrong_result_from_decaps_on_wrong_ct");
-	tcase_add_checked_fixture(tc, setup, teardown);
+	tcase_add_checked_fixture(tc, setup, NULL);
 	tcase_add_loop_test(tc, test_pqsdk_negative_wrong_shared_secret, 0, countof(supported_KEMs));
 	suite_add_tcase(s, tc);
+
+#ifdef USE_PQSDK_PQSDKD
+	tc = tcase_create("connection");
+	tcase_add_checked_fixture(tc, setup, NULL);
+	tcase_add_loop_test(tc, test_pqsdkd_connect, 0, countof(supported_KEMs));
+	tcase_add_test(tc, test_pqsdkd_comm);
+	suite_add_tcase(s, tc);
+#endif
 }
 
 Suite *pqsdk_pqtls_suite_create()
@@ -231,7 +310,7 @@ Suite *pqsdk_pqtls_suite_create()
 	tcase_add_cases_with_setup(s, setup_pqtls);
 #endif
 #ifdef USE_PQSDK_PQSDKD
-	// test PQSDK:PQTLS
+	// test PQSDK:PQSDK
 	tcase_add_cases_with_setup(s, setup_pqsdkd);
 #endif
 

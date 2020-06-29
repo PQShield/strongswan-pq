@@ -22,6 +22,7 @@
 #include "kem.h"
 #include "pq_message_lib.h"
 #include "pqsdkd_plugin.h"
+#include "comm.h"
 
 #define CHECK_NZ(exp) \
 	do { \
@@ -79,6 +80,11 @@ typedef struct private_pqsdkd_kem_t {
 	 * Pre-allocated buffer for response header.
 	 */
 	chunk_t header_rsp;
+
+	/**
+	 * Pointer to the PQSDKd connection list
+	 */
+	linked_list_t *connection_list;
 } private_pqsdkd_kem_t;
 
 // Change state of the plugin if needed
@@ -117,22 +123,13 @@ static int get_data_len(chunk_t header_rsp) {
  * This function will block.
  */
 static int exchng(chunk_t rsp, const struct comm_t *c, const chunk_t req) {
-	size_t t = 0;
-	ssize_t ret;
-	while (t < req.len) {
-		if ((ret = write(c->req, &req.ptr[t], req.len - t))<0) {
-			return FALSE;
-		}
-		t += ret;
+	if (!c->stream->write_all(c->stream, req.ptr, req.len)) {
+		return FALSE;
+	}
+	if (!c->stream->read_all(c->stream, rsp.ptr, rsp.len)) {
+		return FALSE;
 	}
 
-	t = 0;
-	while (t<rsp.len) {
-		if ((ret = read(c->req, &rsp.ptr[t], rsp.len - t))<0) {
-			return FALSE;
-		}
-		t += ret;
-	}
 	return TRUE;
 }
 
@@ -149,6 +146,9 @@ METHOD(key_exchange_t, destroy, void,
 	chunk_free(&this->public.pk);
 	chunk_clear(&this->public.sk);
 	chunk_clear(&this->public.secret);
+	if (this->comm) {
+		comm_unlock(this->connection_list, this->comm->id);
+	}
 	this->comm = NULL;
 	free(this);
 }
@@ -313,10 +313,19 @@ static int find_pqsdk_kem_id(key_exchange_method_t ike_method_id) {
 struct pqsdkd_kem_t *pqsdkd_kem_create(key_exchange_method_t ike_meth_id)
 {
 	struct private_pqsdkd_kem_t *this;
-	const int pqsdkd_meth_id = find_pqsdk_kem_id(ike_meth_id);
+	int pqsdkd_meth_id;
+	linked_list_t *conn_list;
+
+	conn_list = lib->get(lib, "pqsdkd-connectors-list");
+	pqsdkd_meth_id = find_pqsdk_kem_id(ike_meth_id);
 
 	if (pqsdkd_meth_id == -1) {
-		DBG1(DBG_LIB, "method [%d] not supported\n", ike_meth_id);
+		DBG1(DBG_LIB, "Method [%d] not supported", ike_meth_id);
+		return NULL;
+	}
+
+	if (!conn_list) {
+		DBG1(DBG_LIB, "Internal error: connection list not found");
 		return NULL;
 	}
 
@@ -339,8 +348,15 @@ struct pqsdkd_kem_t *pqsdkd_kem_create(key_exchange_method_t ike_meth_id)
 		.state = ACTION_CREATE,
 		.header_req = chunk_alloc(get_serialized_request_header_size()),
 		.header_rsp = chunk_alloc(get_serialized_response_header_size()),
-		.comm = lib->get(lib, "pqsdkd-connector-main"),
+		.connection_list = conn_list,
+		.comm = comm_lock_next(conn_list),
 	);
+
+	// OZAPTF: implement waiting. How long to wait
+	if (!this->comm) {
+		DBG1(DBG_LIB, "Waiting for available connection\n");
+		return NULL;
+	}
 
 	if (!this->header_req.ptr || !this->header_rsp.ptr) {
 		DBG1(DBG_LIB, "KEM initialization failed\n");

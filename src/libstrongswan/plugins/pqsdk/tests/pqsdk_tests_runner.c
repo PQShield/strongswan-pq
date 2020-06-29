@@ -30,7 +30,14 @@ static test_configuration_t tests[] = {
 
 static bool test_runner_init(bool init) {
 	lib->settings->set_str(lib->settings, "%s.plugins.pqsdk-pqsdkd.socket_path",
-		"/tmp/pqsdkd.ut.sock", lib->ns);
+		"unix:///tmp/pqsdkd.ut.sock", lib->ns);
+	/**
+	 * Min 2 connections as we have tests which create initiator & responders at
+	 * the same time.
+	 */
+	lib->settings->set_int(lib->settings, "%s.plugins.pqsdk-pqsdkd.pqsdkd_conn_n",
+		2, lib->ns);
+
 	if (init) {
 		char *plugins, *plugindir;
 
