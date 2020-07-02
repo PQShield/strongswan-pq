@@ -13,6 +13,7 @@
  * for more details.
  */
 
+#include <assert.h>
 #include <stdbool.h>
 
 #include <library.h>
@@ -23,6 +24,7 @@
 #include "comm.h"
 #include "kem.h"
 #include "pqsdkd_plugin.h"
+#include "processing/jobs/callback_job.h"
 
 extern linked_list_t *connection_list;
 extern mutex_t *connection_list_mutex;
@@ -46,7 +48,45 @@ struct private_pqsdkd_plugin_t {
 	 * Number of connections to PQSDKd
 	 */
 	int pqsdkd_conn_n;
+
+	/**
+	 * Max amount of time read and write operation is allowed
+	 * to take before ex_cond times out. Default 3sec.
+	 */
+	int message_exchange_timeout;
 };
+
+job_requeue_t try_connect(comm_t* comm) {
+	job_requeue_t ret = JOB_REQUEUE_NONE;
+
+	if (!comm || !comm->id) {
+		// Implementation error
+		return JOB_REQUEUE_NONE;
+	}
+
+	if (!comm_lock_by_id(connection_list, comm->id)) {
+		return JOB_RESCHEDULE_MS(comm->reconnect_timeout);
+	}
+
+	if (comm->reconnect) {
+		comm->stream->destroy(comm->stream);
+		comm->reconnect = false;
+	} else if (comm->stream) {
+		// Stream is already created, just quit.
+		goto end;
+	}
+
+	comm->stream = lib->streams->connect(
+		lib->streams, comm->socket_path);
+	if (!comm->stream) {
+		ret = JOB_RESCHEDULE_MS(comm->reconnect_timeout);
+		goto end;
+	}
+
+end:
+	comm_unlock(connection_list, comm->id);
+	return ret;
+}
 
 static int init_pqsdkd(private_pqsdkd_plugin_t *plugin) {
 	if (plugin->is_pqsdk_on) {
@@ -54,10 +94,14 @@ static int init_pqsdkd(private_pqsdkd_plugin_t *plugin) {
 		goto end;
 	}
 	char *socket_path;
+	int reconnect_timeout;
 
 	plugin->pqsdkd_conn_n = lib->settings->get_int(lib->settings,
 		"%s.plugins.pqsdk-pqsdkd.pqsdkd_conn_n", 1, lib->ns);
-
+	plugin->message_exchange_timeout = lib->settings->get_int(lib->settings,
+		"%s.plugins.pqsdk-pqsdkd.message_exchange_timeout", 3000, lib->ns);
+	reconnect_timeout = lib->settings->get_int(lib->settings,
+		"%s.plugins.pqsdk-pqsdkd.reconnect_timeout", 100, lib->ns);
 	socket_path = lib->settings->get_str(lib->settings,
 		"%s.plugins.pqsdk-pqsdkd.socket_path", NULL, lib->ns);
 	if (!socket_path) {
@@ -74,20 +118,21 @@ static int init_pqsdkd(private_pqsdkd_plugin_t *plugin) {
 		}
 		memset(comm, 0, sizeof(*comm));
 
-		comm->stream = lib->streams->connect(
-			lib->streams, socket_path);
-		if (!comm->stream) {
-			DBG1(DBG_LIB, "Can't connect to PQSDKd.");
-			free(comm);
-			goto end;
-		}
-
 		comm->id = i+1;
 		comm->socket_path = socket_path;
+		comm->reconnect_timeout = reconnect_timeout;
 		if (!comm_add(connection_list, comm)) {
-			free(comm);
 			DBG1(DBG_LIB, "PQSDKd requestor can't be initialized.");
-			goto end;
+			return FALSE;
+		}
+
+	    comm->stream = lib->streams->connect(
+	            lib->streams, comm->socket_path);
+	    if (!comm->stream) {
+	    	// PQSDKd not available now. Try later
+			lib->processor->queue_job(lib->processor,
+				(job_t*)callback_job_create_with_prio((callback_job_cb_t)try_connect, comm,
+					NULL, (callback_job_cancel_t)return_false, JOB_PRIO_HIGH));
 		}
 	}
 
@@ -95,8 +140,8 @@ static int init_pqsdkd(private_pqsdkd_plugin_t *plugin) {
 
 end:
 	if (plugin->is_pqsdk_on) {
-		// TODO: because of that plugin supports only one client
 		lib->set(lib, "pqsdkd-connectors-list", connection_list);
+		lib->set(lib, "message-exchange-timeout", &plugin->message_exchange_timeout);
 	}
 
 	return (int)plugin->is_pqsdk_on;
@@ -138,13 +183,6 @@ METHOD(plugin_t, destroy, void,
 	enumerator_t *it;
 	comm_t *el = NULL;
 
-	//this->comm.stream->destroy(this->comm.stream);
-	/*
-	if (this->comm.socket_path) {
-		unlink(this->comm.socket_path);
-		this->comm.socket_path = NULL;
-	}
-	*/
 	if (connection_list) {
 		comm_clean_list(connection_list);
 		connection_list->destroy(connection_list);
@@ -183,6 +221,14 @@ plugin_t *pqsdk_pqsdkd_plugin_create()
 	if (!init_pqsdkd(this)) {
 		DBG1(DBG_LIB, "PQSDK:PQSDKd initialization failed");
 		return NULL;
+	}
+
+	// Must have at least 2 threads for event based communication.
+	if (lib->processor->get_total_threads(lib->processor) < 2)
+	{
+		dbg_default_set_level(0);
+		lib->processor->set_threads(lib->processor, 2);
+		dbg_default_set_level(1);
 	}
 
 	return &this->public.plugin;

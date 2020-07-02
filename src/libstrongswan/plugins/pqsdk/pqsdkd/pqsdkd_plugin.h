@@ -28,7 +28,7 @@
 #include <stdbool.h>
 
 typedef struct pqsdkd_plugin_t pqsdkd_plugin_t;
-
+typedef struct comm_t comm_t;
 /**
  * The plugin adds support for post-quantum KEMs. The implementation
  * of KEMs is provided by PQShield's PQSDKd daemon.
@@ -40,5 +40,7 @@ struct pqsdkd_plugin_t {
    */
   plugin_t plugin;
 };
+
+job_requeue_t try_connect(comm_t *comm);
 
 #endif /** PQSDKD_PLUGIN_H_ @}*/

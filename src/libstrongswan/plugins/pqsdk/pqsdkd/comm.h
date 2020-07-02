@@ -30,6 +30,17 @@ typedef struct comm_t {
    * Indicates wether connection is currently in use.
    */
   bool is_used;
+
+  /**
+   * Whether try_connect callback should close the stream
+   * before calling connect()
+   */
+  bool reconnect;
+
+  /**
+   * Amount of ms to wait before trying to reconnect to PQSDKd
+   */
+  int reconnect_timeout;
 } comm_t;
 
 /**
@@ -60,11 +71,22 @@ comm_t *comm_get_by_id(linked_list_t *comm_list, int id);
  *
  * @param comm_list		List of usable communication
  *						contexts.
- * @param id 			Unique ID of communitaction context.
  * @return				Communication context or NULL if non
  *available.
  */
 comm_t *comm_lock_next(linked_list_t *comm_list);
+
+/**
+ * Locks and returns communication context assigned
+ * to "id". The context must be unused.
+ *
+ * @param comm_list		List of usable communication
+ *						contexts.
+ * @param id 			Unique ID of communitaction context.
+ * @return				Communication context or NULL if not
+ *available.
+ */
+comm_t *comm_lock_by_id(linked_list_t *comm_list, int fd);
 
 /**
  * Mark communication context as free to use.

@@ -59,6 +59,20 @@ comm_t* comm_lock_next(linked_list_t *l) {
 	return el;
 }
 
+comm_t* comm_lock_by_id(linked_list_t *l, int id) {
+	comm_t *ret = NULL;
+	comm_t *el = NULL;
+	connection_list_mutex->lock(connection_list_mutex);
+	if ((el = comm_get_by_id_unlocked(l, id))) {
+		if (!el->is_used) {
+			el->is_used = TRUE;
+			ret = el;
+		}
+	}
+	connection_list_mutex->unlock(connection_list_mutex);
+	return ret;
+}
+
 void comm_unlock(linked_list_t *l, int id) {
 	comm_t *el = NULL;
 
