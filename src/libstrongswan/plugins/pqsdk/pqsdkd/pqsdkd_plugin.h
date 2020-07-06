@@ -25,7 +25,6 @@
 #define PQSDKD_PLUGIN_H_
 
 #include <plugins/plugin.h>
-#include <stdbool.h>
 
 typedef struct pqsdkd_plugin_t pqsdkd_plugin_t;
 typedef struct comm_t comm_t;

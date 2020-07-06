@@ -23,13 +23,16 @@
 #include <threading/condvar.h>
 #include <threading/mutex.h>
 #include <library.h>
+
+#include "comm.h"
 #include "kem.h"
 #include "pq_message_lib.h"
 #include "pqsdkd_plugin.h"
-#include "comm.h"
 
 #include "processing/jobs/callback_job.h"
 
+// Length of public key and ciphertext header
+#define PQTLS_HEADER_LEN 6
 #define CHECK_NZ(exp) \
 	do { \
 		if (!(exp)) { \
@@ -97,6 +100,18 @@ typedef struct pqsdkd_ctx_t {
 
 } pqsdkd_ctx_t;
 
+/** Properties of an PQ KEM algorithm */
+typedef struct alg_desc_t {
+	/** IKE ID of a KEM */
+	key_exchange_method_t ike_method_id;
+	/** ID used by PQTLS */
+	unsigned int pqsdk_id;
+	/** Length of public key */
+	unsigned int pk_size;
+	/** Lenght of ciphertext */
+	unsigned int ct_size;
+} alg_desc_t;
+
 typedef struct private_pqsdkd_kem_t {
 	/**
 	 * Public interface for PQSDK.
@@ -111,7 +126,7 @@ typedef struct private_pqsdkd_kem_t {
 	/**
 	 * PQSDKd key exchange method
 	 */
-	int pqsdkd_meth_id;
+	const alg_desc_t *desc;
 
 	/*
 	 * Stores actions done by a plugin indicating
@@ -143,6 +158,24 @@ typedef struct private_pqsdkd_kem_t {
 	 */
 	linked_list_t *connection_list;
 } private_pqsdkd_kem_t;
+
+/** Stores properties of PQ KEMs */
+static const alg_desc_t alg_desc[] = {
+	{KE_FRODO_SHAKE_L1, FRODO640,           9616,	9720},
+	{KE_FRODO_SHAKE_L3, FRODO976,           15632,	15744},
+	{KE_FRODO_SHAKE_L5, FRODO1344,          21520,	21632},
+	{KE_NTRU_HPS_L1,    NTRU_HPS_2048509,   699,	699},
+	{KE_NTRU_HRSS_L3,   NTRU_HRSS_701,      1138,	1138},
+	{KE_RND5_5D_CCA_L1, RND5_1CCA_5D,       461,	620	},
+	{KE_RND5_5D_CCA_L3, RND5_3CCA_5D,       780,	934	},
+	{KE_RND5_5D_CCA_L5, RND5_5CCA_5D,       978,	1285},
+	{KE_KYBER_L1,       KYBER_512,          800,	736	},
+	{KE_KYBER_L3,       KYBER_768,          1184,	1088},
+	{KE_KYBER_L5,       KYBER_1024,         1568,	1568},
+	{KE_SABER_L1,       SABER_LIGHT,        672,	736	},
+	{KE_SABER_L3,       SABER,              992,	1088},
+	{KE_SABER_L5,       SABER_FIRE,         1312,	1472},
+};
 
 // Change state of the plugin if needed
 static void change_state(private_pqsdkd_kem_t *ka, ex_action_t action) {
@@ -431,7 +464,7 @@ METHOD(key_exchange_t, get_public_key, bool,
 
 	if (!is_responder(this, ACTION_PUB_GET)) {
 		CHECK_NZ(!serialize_request_header(this->header_req.ptr,
-			this->header_req.len, 0, 0, this->pqsdkd_meth_id, KeypairGeneration));
+			this->header_req.len, 0, 0, this->desc->pqsdk_id, KeypairGeneration));
 
 		CHECK_NZ(communicate(this->header_rsp, this->header_req,
 			this->comm->stream, &this->pqsdkd_ctx));
@@ -477,9 +510,14 @@ METHOD(key_exchange_t, set_public_key, bool,
 	bool ret = FALSE;
 
 	if (is_responder(this, ACTION_PUB_SET)) {
+
+		if (value.len != (this->desc->pk_size + PQTLS_HEADER_LEN)) {
+			goto end;
+		}
+
 		CHECK_NZ(!serialize_request_header(this->header_req.ptr,
 			this->header_req.len, 0, value.len,
-			this->pqsdkd_meth_id, Encapsulation));
+			this->desc->pqsdk_id, Encapsulation));
 
 		CHECK_NZ(communicate(chunk_empty, this->header_req,
 			this->comm->stream,	&this->pqsdkd_ctx));
@@ -500,11 +538,14 @@ METHOD(key_exchange_t, set_public_key, bool,
 		this->public.ct = chunk_clone(chunk_create(ct, ctsz));
 		this->public.secret = chunk_clone(chunk_create(ss, sssz));
 	} else {
+		if (value.len != (this->desc->ct_size + PQTLS_HEADER_LEN)) {
+			goto end;
+		}
 		// request decapsulation
 		sz = structure_two_entries_length(this->public.sk.len, value.len);
 		CHECK_NZ(!serialize_request_header(this->header_req.ptr,
 			this->header_req.len, 0, sz,
-			this->pqsdkd_meth_id, Decapsulation));
+			this->desc->pqsdk_id, Decapsulation));
 		ch = chunk_alloc(sz);
 		CHECK_NZ(ch.ptr);
 
@@ -539,47 +580,24 @@ end:
 	return ret;
 }
 
-static int find_pqsdk_kem_id(key_exchange_method_t ike_method_id) {
-	static const struct {
-		key_exchange_method_t ike_method_id;
-		unsigned int pqsdk_id;
-	} map[] = {
-		{ KE_FRODO_SHAKE_L1, FRODO640         },
-		{ KE_FRODO_SHAKE_L3, FRODO976         },
-		{ KE_FRODO_SHAKE_L5, FRODO1344        },
-		{ KE_NTRU_HPS_L1,    NTRU_HPS_2048509 },
-		{ KE_NTRU_HRSS_L3,   NTRU_HRSS_701    },
-		{ KE_RND5_5D_CCA_L1, RND5_1CCA_5D     },
-		{ KE_RND5_5D_CCA_L3, RND5_3CCA_5D     },
-		{ KE_RND5_5D_CCA_L5, RND5_5CCA_5D     },
-		{ KE_KYBER_L1,       KYBER_512        },
-		{ KE_KYBER_L3,       KYBER_768        },
-		{ KE_KYBER_L5,       KYBER_1024       },
-		{ KE_SABER_L1,       SABER_LIGHT      },
-		{ KE_SABER_L3,       SABER            },
-		{ KE_SABER_L5,       SABER_FIRE       },
-	};
-
-	for(size_t i=0; i<countof(map); i++) {
-		if (map[i].ike_method_id == ike_method_id) {
-			return map[i].pqsdk_id;
+const alg_desc_t *get_alg_desc_by_meth_id(key_exchange_method_t ike_method_id) {
+	for(size_t i=0; i<countof(alg_desc); i++) {
+		if (alg_desc[i].ike_method_id == ike_method_id) {
+			return &alg_desc[i];
 		}
 	}
-	return -1;
+	return NULL;
 }
 
-struct pqsdkd_kem_t *pqsdkd_kem_create(key_exchange_method_t ike_meth_id)
-{
+struct pqsdkd_kem_t *pqsdkd_kem_create(key_exchange_method_t ike_meth_id) {
 	struct private_pqsdkd_kem_t *this;
-	int pqsdkd_meth_id;
 	linked_list_t *conn_list;
 	int *message_exchange_to;
+	const alg_desc_t *desc;
 
 	conn_list = lib->get(lib, "pqsdkd-connectors-list");
 	message_exchange_to = lib->get(lib, "message-exchange-timeout");
-	pqsdkd_meth_id = find_pqsdk_kem_id(ike_meth_id);
-
-	if (pqsdkd_meth_id == -1) {
+	if (!(desc = get_alg_desc_by_meth_id(ike_meth_id))) {
 		DBG1(DBG_LIB, "Method [%d] not supported", ike_meth_id);
 		return NULL;
 	}
@@ -606,10 +624,10 @@ struct pqsdkd_kem_t *pqsdkd_kem_create(key_exchange_method_t ike_meth_id)
 			},
 			.ct = chunk_empty,
 			.secret = chunk_empty,
-			.has_secret = TRUE,
+			.has_secret = FALSE,
 		},
 		.ike_meth_id = ike_meth_id,
-		.pqsdkd_meth_id = pqsdkd_meth_id,
+		.desc = desc,
 		.state = ACTION_CREATE,
 		.pqsdkd_ctx = {
 			.ex_cond = condvar_create(CONDVAR_TYPE_DEFAULT),
