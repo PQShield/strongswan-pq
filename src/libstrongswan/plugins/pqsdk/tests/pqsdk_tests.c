@@ -19,6 +19,10 @@
 #include "pqtls/kem.h"
 #include "pqsdkd/kem.h"
 
+#ifdef USE_PQSDK_PQSDKD
+#include "pqsdkd/comm.h"
+#endif // USE_PQSDK_PQSDKD
+
 const int count = 10;
 
 typedef key_exchange_t* (*kem_creator_t)(key_exchange_method_t method);
@@ -95,6 +99,7 @@ START_TEST(test_pqsdk_negative_unexpcted_input) {
 	chunk_t pk, ct, fake_pk, fake_ct, ss;
 	key_exchange_t *i_ke, *r_ke;
 
+
 	// unsupported KEM
 	ck_assert(!ctor(KE_BIKE1_L1));
 	// not a KEM
@@ -119,9 +124,11 @@ START_TEST(test_pqsdk_negative_unexpcted_input) {
 	fake_pk.len--;
 	ck_assert(!r_ke->set_public_key(r_ke, fake_pk));
 	ck_assert(!r_ke->get_shared_secret(r_ke, &ss));
+
 	fake_pk.len=1;
 	ck_assert(!r_ke->set_public_key(r_ke, fake_pk));
 	ck_assert(!r_ke->get_shared_secret(r_ke, &ss));
+
 	fake_pk.len=0;
 	ck_assert(!r_ke->set_public_key(r_ke, fake_pk));
 	ck_assert(!r_ke->get_shared_secret(r_ke, &ss));
@@ -200,25 +207,104 @@ static void setup_pqsdkd(void) {
 }
 #endif
 
-static void teardown(void) {ctor = 0;}
+#ifdef USE_PQSDK_PQSDKD
+START_TEST(test_pqsdkd_connect) {
+	comm_t *el = NULL;
+	linked_list_t *connection_list;
+	connection_list = lib->get(lib, "pqsdkd-connectors-list");
+	ck_assert(connection_list != NULL);
+	el = comm_lock_next(connection_list);
+	ck_assert(el != NULL);
+	ck_assert(el->socket_path);
+	ck_assert(el->stream);
+	ck_assert(el->id != 0);
+	ck_assert(el->is_used);
+	comm_unlock(connection_list, el->id);
+}
+END_TEST
+
+START_TEST(test_pqsdkd_comm) {
+	linked_list_t *ltmp;
+	comm_t *comm1 = (comm_t*)malloc(sizeof(*comm1));
+	comm_t *comm2 = (comm_t*)malloc(sizeof(*comm2));
+
+	ltmp = linked_list_create();
+	comm1->id = 1;
+	comm2->id = 2;
+	comm1->stream = comm2 ->stream = NULL;
+	ck_assert(ltmp->get_count(ltmp) == 0);
+	ck_assert(comm_add(ltmp, comm1));
+	ck_assert(ltmp->get_count(ltmp) == 1);
+	ck_assert(!comm_add(ltmp, comm1));
+	ck_assert(ltmp->get_count(ltmp) == 1);
+	ck_assert(comm_add(ltmp, comm2));
+	ck_assert(ltmp->get_count(ltmp) == 2);
+
+	ck_assert(comm_lock_by_id(ltmp, 1));
+	ck_assert(!comm_lock_by_id(ltmp, 1));
+	comm_unlock(ltmp, 1);
+
+	comm_t *c1 = NULL, *c2 = NULL, *c3 = NULL;
+	ck_assert((c1 = comm_lock_next(ltmp)));
+	ck_assert((c2 = comm_lock_next(ltmp)));
+	ck_assert(!(c3 = comm_lock_next(ltmp)));
+
+	ck_assert(c1->is_used);
+	ck_assert(c2->is_used);
+	ck_assert(c1->id == 1);
+	ck_assert(c2->id == 2);
+	ck_assert(c1->id != c2->id);
+
+	comm_unlock(ltmp, c2->id);
+	c2 = NULL;
+	ck_assert((c2 = comm_lock_next(ltmp)));
+	ck_assert(c2->id == 2);
+
+	comm_unlock(ltmp, c1->id);
+	ck_assert((c1 = comm_get_by_id(ltmp, 1)));
+	ck_assert(!(c3 = comm_get_by_id(ltmp, 3)));
+
+	comm_clean_list(ltmp);
+	ck_assert(ltmp->get_count(ltmp) == 0);
+	ltmp->destroy(ltmp);
+	ltmp = NULL;
+	comm_clean_list(ltmp);
+}
+END_TEST
+#endif
 
 void tcase_add_cases_with_setup(Suite *s, void(*setup)(void)) {
 	TCase *tc;
+
 	tc = tcase_create("roundtrip");
-	test_case_set_timeout(tc, 5);
-	tcase_add_checked_fixture(tc, setup, teardown);
+	test_case_set_timeout(tc, 60);
+	tcase_add_checked_fixture(tc, setup, NULL);
 	tcase_add_loop_test(tc, test_pqsdk_roundtrip, 0, countof(supported_KEMs));
 	suite_add_tcase(s, tc);
 
-	tc = tcase_create("unexpected_input");
-	tcase_add_checked_fixture(tc, setup, teardown);
+	tc = tcase_create("negative_unexpcted_input");
+	test_case_set_timeout(tc, 60);
+	tcase_add_checked_fixture(tc, setup, NULL);
 	tcase_add_loop_test(tc, test_pqsdk_negative_unexpcted_input, 0, countof(supported_KEMs));
 	suite_add_tcase(s, tc);
 
-	tc = tcase_create("ensure_wrong_result_from_decaps_on_wrong_ct");
-	tcase_add_checked_fixture(tc, setup, teardown);
+	tc = tcase_create("negative_wrong_shared_secret");
+	test_case_set_timeout(tc, 60);
+	tcase_add_checked_fixture(tc, setup, NULL);
 	tcase_add_loop_test(tc, test_pqsdk_negative_wrong_shared_secret, 0, countof(supported_KEMs));
 	suite_add_tcase(s, tc);
+
+#ifdef USE_PQSDK_PQSDKD
+	tc = tcase_create("negative_wrong_shared_secret");
+	test_case_set_timeout(tc, 60);
+	tcase_add_test(tc, test_pqsdkd_connect);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("negative_wrong_shared_secret");
+	test_case_set_timeout(tc, 60);
+	tcase_add_test(tc, test_pqsdkd_comm);
+	suite_add_tcase(s, tc);
+#endif
 }
 
 Suite *pqsdk_pqtls_suite_create()
@@ -231,7 +317,7 @@ Suite *pqsdk_pqtls_suite_create()
 	tcase_add_cases_with_setup(s, setup_pqtls);
 #endif
 #ifdef USE_PQSDK_PQSDKD
-	// test PQSDK:PQTLS
+	// test PQSDK:PQSDK
 	tcase_add_cases_with_setup(s, setup_pqsdkd);
 #endif
 

@@ -2,20 +2,20 @@ TESTS = pqsdk_tests
 
 check_PROGRAMS = $(TESTS)
 
-pqsdk_tests_SOURCES =       \
-    pqsdk_tests.c           \
+pqsdk_tests_SOURCES = \
+    pqsdk_tests.c \
     pqsdk_tests_runner.c
 
 pqsdk_tests_CFLAGS = \
-    -I$(top_srcdir)/src/libstrongswan                               \
-    -I$(top_srcdir)/src/libstrongswan/tests                         \
+    -I$(top_srcdir)/src/libstrongswan \
+    -I$(top_srcdir)/src/libstrongswan/tests \
     -DPLUGINDIR=\""$(abs_top_builddir)/src/libstrongswan/plugins\"" \
-    -DPLUGINS=\""${s_plugins}\""                                    \
+    -DPLUGINS=\""${s_plugins}\"" \
     @COVERAGE_CFLAGS@
 
 pqsdk_tests_LDFLAGS = @COVERAGE_LDFLAGS@
-pqsdk_tests_LDADD =                                     \
-    $(top_builddir)/src/libstrongswan/libstrongswan.la  \
+pqsdk_tests_LDADD = \
+    $(top_builddir)/src/libstrongswan/libstrongswan.la \
     $(top_builddir)/src/libstrongswan/tests/libtest.la
 
 if USE_PQSDK_PQTLS

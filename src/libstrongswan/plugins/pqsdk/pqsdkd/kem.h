@@ -56,6 +56,7 @@ struct pqsdkd_kem_t {
    * Shared secret
    */
   chunk_t secret;
+
   /**
    * Indicates wethar shared secret was generated and is
    * available to use.

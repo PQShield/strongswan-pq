@@ -11,8 +11,9 @@ plugin_LTLIBRARIES = libstrongswan-pqsdk-pqsdkd.la
 endif
 
 libstrongswan_pqsdk_pqsdkd_la_SOURCES = \
-	pqsdkd_plugin.c						\
-	kem.c
+	comm.c                              \
+	kem.c								\
+	pqsdkd_plugin.c
 
 libstrongswan_pqsdk_pqsdkd_la_LDFLAGS = \
 	-L$(PQSDK_LIB_DIR) 					\
