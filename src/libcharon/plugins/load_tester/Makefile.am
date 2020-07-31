@@ -23,10 +23,5 @@ libstrongswan_load_tester_la_SOURCES = \
 
 libstrongswan_load_tester_la_LDFLAGS = -module -avoid-version
 
-if USE_GSL
-	libstrongswan_load_tester_CFLAGS += -DUSE_GSL
-	libstrongswan_load_tester_LDFLAGS += -lgsl -lgslcblas
-endif
-
 ipsec_PROGRAMS = load-tester
 load_tester_SOURCES = load_tester.c
